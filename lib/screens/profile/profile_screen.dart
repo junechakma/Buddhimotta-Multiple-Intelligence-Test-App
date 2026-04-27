@@ -87,7 +87,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.primary),
+            )
           : CustomScrollView(
               slivers: [
                 SliverAppBar(
@@ -99,8 +101,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ? null
                       : GestureDetector(
                           onTap: () => Navigator.of(context).pop(),
-                          child: const Icon(Icons.arrow_back_ios_new_rounded,
-                              color: Colors.white),
+                          child: const Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: Colors.white,
+                          ),
                         ),
                   flexibleSpace: FlexibleSpaceBar(
                     background: Container(
@@ -118,7 +122,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               color: Colors.white.withValues(alpha: 0.2),
                               shape: BoxShape.circle,
                               border: Border.all(
-                                  color: Colors.white, width: 2.5),
+                                color: Colors.white,
+                                width: 2.5,
+                              ),
                             ),
                             child: Center(
                               child: Text(
@@ -173,8 +179,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   _ProfileTile(
                                     icon: Icons.email_outlined,
                                     label: 'email'.tr(),
-                                    value: FirebaseAuth
-                                            .instance.currentUser?.email ??
+                                    value:
+                                        FirebaseAuth
+                                            .instance
+                                            .currentUser
+                                            ?.email ??
                                         '-',
                                   ),
                                 ],
@@ -411,26 +420,37 @@ class _EditableNameTile extends StatelessWidget {
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(
-                    color: AppColors.primary, strokeWidth: 2),
+                  color: AppColors.primary,
+                  strokeWidth: 2,
+                ),
               )
             else ...[
               GestureDetector(
                 onTap: onCancel,
-                child: const Icon(Icons.close_rounded,
-                    color: Colors.grey, size: 20),
+                child: const Icon(
+                  Icons.close_rounded,
+                  color: Colors.grey,
+                  size: 20,
+                ),
               ),
               const SizedBox(width: 8),
               GestureDetector(
                 onTap: onSave,
-                child: const Icon(Icons.check_rounded,
-                    color: AppColors.primary, size: 20),
+                child: const Icon(
+                  Icons.check_rounded,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
               ),
             ],
           ] else
             GestureDetector(
               onTap: onEdit,
-              child: const Icon(Icons.edit_outlined,
-                  color: AppColors.primary, size: 18),
+              child: const Icon(
+                Icons.edit_outlined,
+                color: AppColors.primary,
+                size: 18,
+              ),
             ),
         ],
       ),

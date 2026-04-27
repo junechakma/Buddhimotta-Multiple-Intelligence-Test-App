@@ -1,17 +1,15 @@
 import 'package:easy_localization/easy_localization.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../models/intelligence_data.dart';
-import '../../services/firestore_service.dart';
-import '../../services/guest_session.dart';
+import '../../services/local_results_service.dart';
 import '../../theme/app_colors.dart';
 
 class ResultsScreen extends StatefulWidget {
   final Map<String, dynamic>? extra;
-
   const ResultsScreen({super.key, this.extra});
 
   @override
@@ -20,23 +18,24 @@ class ResultsScreen extends StatefulWidget {
 
 class _ResultsScreenState extends State<ResultsScreen> {
   Map<String, double> _percentages = {};
+  String? _testDate;
   bool _loading = true;
   bool _hasResults = false;
 
-  final List<String> _categoryOrder = [
+  static const _categoryOrder = [
     'musical', 'visual', 'linguistic', 'logical',
     'physical', 'interpersonal', 'intrapersonal', 'naturalistic',
   ];
 
-  static const List<Color> _barColors = [
+  static const _barColors = [
     AppColors.primary,
     AppColors.dustyGrape,
     AppColors.amethystSmoke,
     AppColors.accent,
     Color(0xFF78A237),
-    AppColors.primary,
-    AppColors.dustyGrape,
-    AppColors.amethystSmoke,
+    Color(0xFFD83C36),
+    Color(0xFF9B3DA0),
+    Color(0xFF2196F3),
   ];
 
   @override
@@ -46,7 +45,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
   }
 
   Future<void> _loadResults() async {
-    // If navigated from test screen with fresh results
+    // Fresh results passed from test screen
     if (widget.extra != null) {
       final pct = widget.extra!['percentages'] as Map<String, dynamic>?;
       if (pct != null) {
@@ -58,43 +57,35 @@ class _ResultsScreenState extends State<ResultsScreen> {
         return;
       }
     }
-
-    // Otherwise load from Firestore
-    if (GuestSession.isGuest) {
-      setState(() => _loading = false);
-      return;
-    }
-
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) {
-      setState(() => _loading = false);
-      return;
-    }
-
-    try {
-      final doc = await FirestoreService.getDocument('users', uid);
-      if (mounted && doc.exists) {
-        final data = doc.data()!;
-        final pct = data['mi_percentages'] as Map<String, dynamic>?;
-        if (pct != null) {
-          setState(() {
-            _percentages = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
-            _hasResults = true;
-          });
-        }
+    // Load from local storage
+    final saved = await LocalResultsService.load();
+    if (mounted) {
+      if (saved != null) {
+        final pct = saved['percentages'] as Map<String, dynamic>;
+        setState(() {
+          _percentages = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
+          _testDate = saved['date'] as String?;
+          _hasResults = true;
+        });
       }
-    } catch (_) {}
-
-    if (mounted) setState(() => _loading = false);
+      setState(() => _loading = false);
+    }
   }
 
-  List<MapEntry<String, double>> get _sortedByScore {
-    final entries = _percentages.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return entries;
-  }
+  List<MapEntry<String, double>> get _sorted =>
+      _percentages.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
 
-  List<MapEntry<String, double>> get _top3 => _sortedByScore.take(3).toList();
+  List<MapEntry<String, double>> get _top3 => _sorted.take(3).toList();
+
+  String _formatDate(String? iso) {
+    if (iso == null) return '';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return '${dt.day}/${dt.month}/${dt.year}';
+    } catch (_) {
+      return '';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -108,76 +99,116 @@ class _ResultsScreenState extends State<ResultsScreen> {
           : CustomScrollView(
               slivers: [
                 SliverAppBar(
-                  expandedHeight: 120,
+                  expandedHeight: 130,
                   pinned: true,
                   backgroundColor: AppColors.primary,
-                  flexibleSpace: FlexibleSpaceBar(
-                    title: Text(
-                      'results'.tr(),
-                      style: GoogleFonts.hindSiliguri(
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                    background: Container(
-                      decoration: const BoxDecoration(
-                        gradient: AppColors.primaryGradient,
-                      ),
-                    ),
-                  ),
                   leading: GestureDetector(
                     onTap: () => context.go('/home'),
                     child: const Icon(Icons.arrow_back_ios_new_rounded,
                         color: Colors.white),
                   ),
+                  flexibleSpace: FlexibleSpaceBar(
+                    titlePadding:
+                        const EdgeInsets.fromLTRB(56, 0, 16, 14),
+                    title: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'results'.tr(),
+                          style: GoogleFonts.hindSiliguri(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                        if (_testDate != null && _testDate!.isNotEmpty)
+                          Text(
+                            _formatDate(_testDate),
+                            style: GoogleFonts.hindSiliguri(
+                                fontSize: 11, color: Colors.white60),
+                          ),
+                      ],
+                    ),
+                    background: Container(
+                      decoration: const BoxDecoration(
+                          gradient: AppColors.primaryGradient),
+                    ),
+                  ),
                 ),
                 if (!_hasResults)
                   SliverFillRemaining(
                     child: _NoResultsView(
-                      onTakeTest: () => context.push('/test'),
-                    ),
+                        onTakeTest: () => context.push('/test')),
                   )
                 else
                   SliverPadding(
                     padding: const EdgeInsets.all(16),
                     sliver: SliverList(
                       delegate: SliverChildListDelegate([
-                        _SectionTitle('results_chart_title'.tr()),
-                        const SizedBox(height: 12),
+                        // ── Chart ───────────────────────
+                        _SectionLabel('results_chart_title'.tr()),
+                        const SizedBox(height: 10),
                         _BarChartCard(
                           categoryOrder: _categoryOrder,
                           percentages: _percentages,
                           barColors: _barColors,
                           isBn: isBn,
-                        ),
+                        ).animate().fadeIn(duration: 400.ms),
+
                         const SizedBox(height: 24),
-                        _SectionTitle('top3_title'.tr()),
-                        const SizedBox(height: 12),
-                        ..._top3.asMap().entries.map((entry) {
-                          final rank = entry.key + 1;
-                          final catKey = entry.value.key;
-                          final pct = entry.value.value;
+
+                        // ── Top 3 ────────────────────────
+                        _SectionLabel('top3_title'.tr()),
+                        const SizedBox(height: 10),
+                        ..._top3.asMap().entries.map((e) {
+                          final rank = e.key + 1;
+                          final catKey = e.value.key;
+                          final pct = e.value.value;
                           final info = getIntelligenceByKey(catKey);
                           if (info == null) return const SizedBox.shrink();
+                          final color = _barColors[
+                              _categoryOrder.indexOf(catKey) %
+                                  _barColors.length];
                           return _IntelligenceCard(
                             rank: rank,
                             info: info,
                             percentage: pct,
-                            color: _barColors[
-                                _categoryOrder.indexOf(catKey) % _barColors.length],
+                            color: color,
                             isBn: isBn,
-                          );
+                          )
+                              .animate()
+                              .fadeIn(
+                                  delay:
+                                      Duration(milliseconds: 80 * e.key),
+                                  duration: 400.ms)
+                              .slideY(
+                                  begin: 0.1,
+                                  end: 0,
+                                  delay:
+                                      Duration(milliseconds: 80 * e.key));
                         }),
-                        const SizedBox(height: 16),
+
+                        const SizedBox(height: 8),
+
+                        // ── All scores ───────────────────
                         _AllScoresCard(
                           categoryOrder: _categoryOrder,
                           percentages: _percentages,
                           barColors: _barColors,
                           isBn: isBn,
-                        ),
-                        const SizedBox(height: 16),
-                        _DisclaimerCard(),
-                        const SizedBox(height: 24),
+                        ).animate().fadeIn(delay: 300.ms),
+
+                        const SizedBox(height: 14),
+
+                        // ── Disclaimer ───────────────────
+                        _DisclaimerCard()
+                            .animate()
+                            .fadeIn(delay: 350.ms),
+
+                        const SizedBox(height: 20),
+
+                        // ── Retake button ────────────────
                         SizedBox(
                           width: double.infinity,
                           height: 52,
@@ -187,20 +218,20 @@ class _ResultsScreenState extends State<ResultsScreen> {
                               backgroundColor: AppColors.primary,
                               foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
+                                  borderRadius:
+                                      BorderRadius.circular(14)),
                               elevation: 0,
                             ),
                             icon: const Icon(Icons.refresh_rounded),
                             label: Text(
                               'retake_test'.tr(),
                               style: GoogleFonts.hindSiliguri(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
-                              ),
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700),
                             ),
                           ),
-                        ),
+                        ).animate().fadeIn(delay: 400.ms),
+
                         const SizedBox(height: 32),
                       ]),
                     ),
@@ -211,7 +242,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
   }
 }
 
-// ── Bar chart card ────────────────────────────────────────────────────────────
+// ── Bar chart ─────────────────────────────────────────────────────────────────
 
 class _BarChartCard extends StatelessWidget {
   const _BarChartCard({
@@ -229,116 +260,117 @@ class _BarChartCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+      padding: const EdgeInsets.fromLTRB(12, 20, 12, 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.08),
+            color: AppColors.primary.withValues(alpha: 0.07),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
         ],
       ),
-      child: Column(
-        children: [
-          SizedBox(
-            height: 220,
-            child: BarChart(
-              BarChartData(
-                maxY: 100,
-                minY: 0,
-                gridData: FlGridData(
-                  show: true,
-                  drawVerticalLine: false,
-                  horizontalInterval: 25,
-                  getDrawingHorizontalLine: (v) => FlLine(
-                    color: Colors.grey.shade200,
-                    strokeWidth: 1,
-                  ),
+      child: SizedBox(
+        height: 220,
+        child: BarChart(
+          BarChartData(
+            maxY: 100,
+            minY: 0,
+            gridData: FlGridData(
+              show: true,
+              drawVerticalLine: false,
+              horizontalInterval: 25,
+              getDrawingHorizontalLine: (_) =>
+                  FlLine(color: Colors.grey.shade100, strokeWidth: 1),
+            ),
+            borderData: FlBorderData(show: false),
+            titlesData: FlTitlesData(
+              leftTitles: AxisTitles(
+                sideTitles: SideTitles(
+                  showTitles: true,
+                  interval: 25,
+                  reservedSize: 28,
+                  getTitlesWidget: (v, _) => Text('${v.toInt()}',
+                      style: GoogleFonts.hindSiliguri(
+                          fontSize: 9, color: AppColors.textSecondary)),
                 ),
-                borderData: FlBorderData(show: false),
-                titlesData: FlTitlesData(
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      interval: 25,
-                      reservedSize: 32,
-                      getTitlesWidget: (v, _) => Text(
-                        '${v.toInt()}',
-                        style: GoogleFonts.hindSiliguri(
-                          fontSize: 10,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      getTitlesWidget: (v, _) {
-                        final idx = v.toInt();
-                        if (idx < 0 || idx >= categoryOrder.length) {
-                          return const SizedBox.shrink();
-                        }
-                        final info = getIntelligenceByKey(categoryOrder[idx]);
-                        final abbr = _abbr(info, isBn);
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            abbr,
-                            style: GoogleFonts.hindSiliguri(
-                              fontSize: 9,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
-                  topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
+              ),
+              bottomTitles: AxisTitles(
+                sideTitles: SideTitles(
+                  showTitles: true,
+                  getTitlesWidget: (v, _) {
+                    final idx = v.toInt();
+                    if (idx < 0 || idx >= categoryOrder.length) {
+                      return const SizedBox.shrink();
+                    }
+                    final info = getIntelligenceByKey(categoryOrder[idx]);
+                    final name = info != null
+                        ? (isBn ? info.nameBn : info.nameEn)
+                        : categoryOrder[idx];
+                    final abbr = name.split(' ').first;
+                    final display = abbr.length > 4
+                        ? abbr.substring(0, 4)
+                        : abbr;
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(display,
+                          style: GoogleFonts.hindSiliguri(
+                              fontSize: 8,
+                              color: AppColors.textSecondary)),
+                    );
+                  },
                 ),
-                barGroups: categoryOrder.asMap().entries.map((entry) {
-                  final idx = entry.key;
-                  final cat = entry.value;
-                  final pct = percentages[cat] ?? 0;
-                  return BarChartGroupData(
-                    x: idx,
-                    barRods: [
-                      BarChartRodData(
-                        toY: pct,
-                        color: barColors[idx % barColors.length],
-                        width: 22,
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(6),
-                        ),
-                      ),
-                    ],
+              ),
+              rightTitles: const AxisTitles(
+                  sideTitles: SideTitles(showTitles: false)),
+              topTitles: const AxisTitles(
+                  sideTitles: SideTitles(showTitles: false)),
+            ),
+            barGroups: categoryOrder.asMap().entries.map((e) {
+              final idx = e.key;
+              final pct = percentages[e.value] ?? 0;
+              return BarChartGroupData(
+                x: idx,
+                barRods: [
+                  BarChartRodData(
+                    toY: pct,
+                    color: barColors[idx % barColors.length],
+                    width: 20,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(6)),
+                  ),
+                ],
+              );
+            }).toList(),
+            barTouchData: BarTouchData(
+              touchTooltipData: BarTouchTooltipData(
+                getTooltipColor: (_) => AppColors.primaryDark,
+                getTooltipItem: (group, _, rod, __) {
+                  final cat = categoryOrder[group.x];
+                  final info = getIntelligenceByKey(cat);
+                  final name = info != null
+                      ? (isBn ? info.nameBn : info.nameEn)
+                      : cat;
+                  return BarTooltipItem(
+                    '$name\n${rod.toY.toStringAsFixed(0)}%',
+                    GoogleFonts.hindSiliguri(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600),
                   );
-                }).toList(),
+                },
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
-
-  String _abbr(IntelligenceInfo? info, bool isBn) {
-    if (info == null) return '?';
-    if (isBn) {
-      final name = info.nameBn;
-      return name.length > 4 ? name.substring(0, 4) : name;
-    }
-    return info.nameEn.split(' ').first.substring(0, 3).toUpperCase();
-  }
 }
 
-// ── Intelligence detail card ──────────────────────────────────────────────────
+// ── Top 3 intelligence card ───────────────────────────────────────────────────
 
 class _IntelligenceCard extends StatelessWidget {
   const _IntelligenceCard({
@@ -355,21 +387,21 @@ class _IntelligenceCard extends StatelessWidget {
   final Color color;
   final bool isBn;
 
+  static const _medals = ['🥇', '🥈', '🥉'];
+
   @override
   Widget build(BuildContext context) {
     final name = isBn ? info.nameBn : info.nameEn;
-    final rankEmojis = ['🥇', '🥈', '🥉'];
-
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.3), width: 1.5),
+        border: Border.all(color: color.withValues(alpha: 0.25), width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: color.withValues(alpha: 0.10),
+            color: color.withValues(alpha: 0.09),
             blurRadius: 14,
             offset: const Offset(0, 4),
           ),
@@ -380,42 +412,39 @@ class _IntelligenceCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(rankEmojis[rank - 1], style: const TextStyle(fontSize: 22)),
+              Text(_medals[rank - 1], style: const TextStyle(fontSize: 22)),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   name,
                   style: GoogleFonts.hindSiliguri(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
                   ),
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(20),
-                ),
+                    color: color, borderRadius: BorderRadius.circular(20)),
                 child: Text(
                   '${percentage.toStringAsFixed(0)}%',
                   style: GoogleFonts.hindSiliguri(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: percentage / 100,
               minHeight: 6,
-              backgroundColor: color.withValues(alpha: 0.15),
+              backgroundColor: color.withValues(alpha: 0.12),
               valueColor: AlwaysStoppedAnimation<Color>(color),
             ),
           ),
@@ -459,15 +488,14 @@ class _InfoSection extends StatelessWidget {
       children: [
         Row(
           children: [
-            Icon(icon, color: color, size: 16),
+            Icon(icon, color: color, size: 15),
             const SizedBox(width: 6),
             Text(
               title,
               style: GoogleFonts.hindSiliguri(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textSecondary,
-              ),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textSecondary),
             ),
           ],
         ),
@@ -475,30 +503,25 @@ class _InfoSection extends StatelessWidget {
         Wrap(
           spacing: 6,
           runSpacing: 6,
-          children: items.map((item) {
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                item,
-                style: GoogleFonts.hindSiliguri(
-                  fontSize: 12,
-                  color: color,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            );
-          }).toList(),
+          children: items.map((item) => Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              item,
+              style: GoogleFonts.hindSiliguri(
+                  fontSize: 11, color: color, fontWeight: FontWeight.w600),
+            ),
+          )).toList(),
         ),
       ],
     );
   }
 }
 
-// ── All scores card ───────────────────────────────────────────────────────────
+// ── All scores ────────────────────────────────────────────────────────────────
 
 class _AllScoresCard extends StatelessWidget {
   const _AllScoresCard({
@@ -516,13 +539,13 @@ class _AllScoresCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.07),
+            color: AppColors.primary.withValues(alpha: 0.06),
             blurRadius: 14,
             offset: const Offset(0, 4),
           ),
@@ -534,15 +557,14 @@ class _AllScoresCard extends StatelessWidget {
           Text(
             'all_scores'.tr(),
             style: GoogleFonts.hindSiliguri(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary),
           ),
           const SizedBox(height: 14),
-          ...categoryOrder.asMap().entries.map((entry) {
-            final idx = entry.key;
-            final cat = entry.value;
+          ...categoryOrder.asMap().entries.map((e) {
+            final idx = e.key;
+            final cat = e.value;
             final pct = percentages[cat] ?? 0;
             final color = barColors[idx % barColors.length];
             final info = getIntelligenceByKey(cat);
@@ -557,22 +579,16 @@ class _AllScoresCard extends StatelessWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          name,
+                        child: Text(name,
+                            style: GoogleFonts.hindSiliguri(
+                                fontSize: 12,
+                                color: AppColors.textSecondary)),
+                      ),
+                      Text('${pct.toStringAsFixed(0)}%',
                           style: GoogleFonts.hindSiliguri(
-                            fontSize: 13,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        '${pct.toStringAsFixed(0)}%',
-                        style: GoogleFonts.hindSiliguri(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: color,
-                        ),
-                      ),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: color)),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -595,7 +611,7 @@ class _AllScoresCard extends StatelessWidget {
   }
 }
 
-// ── Disclaimer card ───────────────────────────────────────────────────────────
+// ── Disclaimer ────────────────────────────────────────────────────────────────
 
 class _DisclaimerCard extends StatelessWidget {
   const _DisclaimerCard();
@@ -603,9 +619,9 @@ class _DisclaimerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.accent.withValues(alpha: 0.10),
+        color: AppColors.accent.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
       ),
@@ -613,16 +629,15 @@ class _DisclaimerCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(Icons.info_outline_rounded,
-              color: AppColors.accent, size: 18),
+              color: AppColors.accent, size: 17),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               'results_disclaimer'.tr(),
               style: GoogleFonts.hindSiliguri(
-                fontSize: 12,
-                color: AppColors.textSecondary,
-                height: 1.5,
-              ),
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                  height: 1.5),
             ),
           ),
         ],
@@ -631,7 +646,7 @@ class _DisclaimerCard extends StatelessWidget {
   }
 }
 
-// ── No results view ───────────────────────────────────────────────────────────
+// ── No results ────────────────────────────────────────────────────────────────
 
 class _NoResultsView extends StatelessWidget {
   const _NoResultsView({required this.onTakeTest});
@@ -645,44 +660,49 @@ class _NoResultsView extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.bar_chart_rounded,
-                size: 72, color: AppColors.amethystSmoke),
-            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.bar_chart_rounded,
+                  size: 64, color: AppColors.amethystSmoke),
+            ),
+            const SizedBox(height: 20),
             Text(
               'no_results_yet'.tr(),
               textAlign: TextAlign.center,
               style: GoogleFonts.hindSiliguri(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
-              ),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary),
             ),
             const SizedBox(height: 8),
             Text(
               'no_results_sub'.tr(),
               textAlign: TextAlign.center,
               style: GoogleFonts.hindSiliguri(
-                fontSize: 14,
-                color: AppColors.textSecondary,
-              ),
+                  fontSize: 14, color: AppColors.textSecondary, height: 1.5),
             ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: onTakeTest,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: onTakeTest,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                elevation: 0,
-              ),
-              child: Text(
-                'take_test'.tr(),
-                style: GoogleFonts.hindSiliguri(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
+                icon: const Icon(Icons.psychology_rounded),
+                label: Text(
+                  'take_test'.tr(),
+                  style: GoogleFonts.hindSiliguri(
+                      fontSize: 15, fontWeight: FontWeight.w700),
                 ),
               ),
             ),
@@ -693,19 +713,29 @@ class _NoResultsView extends StatelessWidget {
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
+// ── Section label ─────────────────────────────────────────────────────────────
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
   final String text;
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: GoogleFonts.hindSiliguri(
-        fontSize: 17,
-        fontWeight: FontWeight.w700,
-        color: AppColors.textPrimary,
-      ),
+    return Row(
+      children: [
+        Container(
+            width: 4,
+            height: 18,
+            decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 8),
+        Text(text,
+            style: GoogleFonts.hindSiliguri(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary)),
+      ],
     );
   }
 }

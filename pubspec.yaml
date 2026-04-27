@@ -51,6 +51,9 @@ dependencies:
   # Localization
   easy_localization: ^3.0.7
 
+  # Local storage
+  shared_preferences: ^2.3.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -70,6 +73,10 @@ flutter:
   assets:
     - assets/buddhimotta-logo.png
     - assets/data.json
+    - assets/swapnil.jpg
+    - assets/june.jpg
+    - assets/chadnee.jpg
+    - assets/asraf.jpg
     - assets/translations/
 
   # An image asset can refer to one or more resolution-specific "variants", see

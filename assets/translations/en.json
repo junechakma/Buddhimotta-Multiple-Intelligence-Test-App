@@ -121,5 +121,35 @@
   "strengths": "Strengths",
   "careers": "Suggested Careers",
 
-  "guest_no_profile": "You are browsing as a guest. Create an account to save your profile and test results."
+  "guest_no_profile": "You are browsing as a guest. Create an account to save your profile and test results.",
+
+  "page": "Page",
+  "cancel": "Cancel",
+  "exit": "Exit",
+  "join": "Join",
+  "exit_test_title": "Exit Test?",
+  "exit_test_body": "Your progress will be lost. Are you sure you want to exit?",
+
+  "teacher_overview": "Overview",
+  "total_students": "Students",
+  "tests_submitted": "Submitted",
+  "avg_score": "Avg Score",
+  "my_students": "My Students",
+  "no_students_yet": "No Students Yet",
+  "no_students_sub": "Share your class code with students to get started.",
+  "class_code_copied": "Class code copied!",
+  "coming_soon": "Coming Soon",
+  "dashboard_coming_soon_sub": "Live student results, class analytics, and more are on the way.",
+
+  "join_a_class": "Join a Class",
+  "change_class": "Change Class",
+  "my_class": "My Class",
+  "class_active": "Active",
+  "enter_new_class_code": "Enter a new class code to switch classes.",
+  "enter_class_code_hint": "Ask your teacher for the class code.",
+  "class_joined": "Successfully joined the class!",
+  "my_progress": "My Progress",
+  "no_progress_yet": "No Progress Yet",
+  "take_test_first": "Complete the MI test to see your progress shared with your teacher.",
+  "classes_coming_soon_sub": "Class leaderboards, shared results, and teacher feedback are coming soon."
 }
