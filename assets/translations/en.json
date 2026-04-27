@@ -78,5 +78,48 @@
   "terms_s5_body": "For questions, contact us at: trimatrix01@gmail.com",
   "terms_thanks": "Thank you!\nTeam TriMatrix",
 
-  "home_coming_soon": "Home Screen\nComing Soon..."
+  "home_coming_soon": "Home Screen\nComing Soon...",
+
+  "loading": "Loading...",
+  "nav_home": "Home",
+  "nav_dashboard": "Dashboard",
+  "nav_classes": "Classes",
+  "nav_profile": "Profile",
+  "about_us": "About Us",
+  "logout": "Logout",
+  "what_is_mi": "What is Multiple Intelligence?",
+  "mi_test": "Multiple Intelligence Test",
+  "real_life_test": "Real Life Scenarios Test",
+  "results": "Results",
+
+  "guest": "Guest",
+  "home_welcome": "Welcome,",
+  "home_section_label": "What would you like to do?",
+  "what_is_mi_sub": "Learn & understand",
+  "mi_test_sub": "Take the test",
+  "real_life_test_short": "Real Life Scenarios",
+  "real_life_test_sub": "Situation analysis",
+  "results_sub": "View your scores",
+
+  "profile": "Profile",
+  "years": "years",
+
+  "category": "Category",
+  "test_answer_all": "Please answer all questions before continuing",
+  "next_category": "Next",
+  "view_results": "View Results",
+  "answered": "answered",
+
+  "results_chart_title": "Your Intelligence Profile",
+  "top3_title": "Your Top 3 Intelligences",
+  "all_scores": "All Category Scores",
+  "results_disclaimer": "This test is based on Howard Gardner's Theory of Multiple Intelligences. The results reflect your current preferences and tendencies, not fixed abilities. Everyone has all intelligences to varying degrees.",
+  "no_results_yet": "No Results Yet",
+  "no_results_sub": "Take the Multiple Intelligence Test to see your results here.",
+  "take_test": "Take the Test",
+  "retake_test": "Retake the Test",
+  "strengths": "Strengths",
+  "careers": "Suggested Careers",
+
+  "guest_no_profile": "You are browsing as a guest. Create an account to save your profile and test results."
 }

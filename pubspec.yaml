@@ -69,6 +69,7 @@ flutter:
 
   assets:
     - assets/buddhimotta-logo.png
+    - assets/data.json
     - assets/translations/
 
   # An image asset can refer to one or more resolution-specific "variants", see

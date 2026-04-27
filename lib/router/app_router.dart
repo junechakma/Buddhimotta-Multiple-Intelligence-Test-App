@@ -6,6 +6,9 @@ import '../screens/auth/login_screen.dart';
 import '../screens/auth/signup_screen.dart';
 import '../screens/auth/terms_screen.dart';
 import '../screens/home/home_screen.dart';
+import '../screens/placeholder_screen.dart';
+import '../screens/results/results_screen.dart';
+import '../screens/test/mi_test_screen.dart';
 import '../services/guest_session.dart';
 
 class AppRouter {
@@ -29,23 +32,20 @@ class AppRouter {
       return null;
     },
     routes: [
+      GoRoute(path: '/login',     builder: (context, _) => const LoginScreen()),
+      GoRoute(path: '/signup',    builder: (context, _) => const SignupScreen()),
+      GoRoute(path: '/terms',     builder: (context, _) => const TermsScreen()),
+      GoRoute(path: '/home',      builder: (context, _) => const HomeScreen()),
+      GoRoute(path: '/intro',     builder: (context, _) => const PlaceholderScreen(titleKey: 'what_is_mi')),
+      GoRoute(path: '/test',      builder: (context, _) => const MiTestScreen()),
+      GoRoute(path: '/scenarios', builder: (context, _) => const PlaceholderScreen(titleKey: 'real_life_test')),
       GoRoute(
-        path: '/login',
-        builder: (context, state) => const LoginScreen(),
+        path: '/results',
+        builder: (context, state) => ResultsScreen(
+          extra: state.extra as Map<String, dynamic>?,
+        ),
       ),
-      GoRoute(
-        path: '/signup',
-        builder: (context, state) => const SignupScreen(),
-      ),
-      GoRoute(
-        path: '/terms',
-        builder: (context, state) => const TermsScreen(),
-      ),
-      GoRoute(
-        path: '/home',
-        builder: (context, state) => const HomeScreen(),
-      ),
-      // More routes added as each screen is converted
+      GoRoute(path: '/about',     builder: (context, _) => const PlaceholderScreen(titleKey: 'about_us')),
     ],
     errorBuilder: (context, state) => Scaffold(
       body: Center(child: Text('পেজটি পাওয়া যায়নি: ${state.error}')),
