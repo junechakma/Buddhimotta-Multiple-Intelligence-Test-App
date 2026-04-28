@@ -21,6 +21,7 @@ class _SignupScreenState extends State<SignupScreen> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _classCodeCtrl = TextEditingController();
+  final _ageCtrl = TextEditingController();
 
   String? _gender;
   int? _age;
@@ -36,13 +37,16 @@ class _SignupScreenState extends State<SignupScreen> {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _classCodeCtrl.dispose();
+    _ageCtrl.dispose();
     super.dispose();
   }
 
   bool _validate() {
     if (_nameCtrl.text.trim().isEmpty) { _snack('err_name'.tr()); return false; }
     if (_gender == null) { _snack('err_gender'.tr()); return false; }
-    if (_age == null) { _snack('err_age'.tr()); return false; }
+    final parsedAge = int.tryParse(_ageCtrl.text.trim());
+    if (parsedAge == null || parsedAge < 1 || parsedAge > 120) { _snack('err_age'.tr()); return false; }
+    _age = parsedAge;
     if (_profession == null) { _snack('err_profession'.tr()); return false; }
     if (_emailCtrl.text.trim().isEmpty) { _snack('err_email'.tr()); return false; }
     if (_passwordCtrl.text.isEmpty) { _snack('err_password'.tr()); return false; }
@@ -311,16 +315,11 @@ class _SignupScreenState extends State<SignupScreen> {
           const SizedBox(height: 16),
           _label('age'.tr()),
           const SizedBox(height: 8),
-          StyledDropdown<int>(
+          AuthInputField(
+            controller: _ageCtrl,
             hint: 'select_age'.tr(),
-            value: _age,
-            items: List.generate(35, (i) => i + 6)
-                .map((v) => DropdownMenuItem(
-                    value: v,
-                    child: Text('age_years'.tr(args: ['$v']),
-                        style: GoogleFonts.hindSiliguri())))
-                .toList(),
-            onChanged: (v) => setState(() => _age = v),
+            icon: Icons.cake_outlined,
+            keyboardType: TextInputType.number,
           ),
           const SizedBox(height: 16),
           _label('profession'.tr()),

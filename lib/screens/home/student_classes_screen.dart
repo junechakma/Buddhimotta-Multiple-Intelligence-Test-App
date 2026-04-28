@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../models/intelligence_data.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 
@@ -16,6 +17,8 @@ class StudentClassesScreen extends StatefulWidget {
 class _StudentClassesScreenState extends State<StudentClassesScreen> {
   String _studentName = '';
   String _joinedClassCode = '';
+  Map<String, double>? _miPercentages;
+  Map<String, double>? _scenarioPercentages;
   bool _loading = true;
   bool _joining = false;
 
@@ -43,9 +46,19 @@ class _StudentClassesScreenState extends State<StudentClassesScreen> {
       final doc = await FirestoreService.getDocument('users', uid);
       if (mounted && doc.exists) {
         final data = doc.data()!;
+        final miRaw = data['miResults'] as Map<String, dynamic>?;
+        final scenarioRaw = data['scenarioResults'] as Map<String, dynamic>?;
         setState(() {
           _studentName = (data['name'] ?? '') as String;
           _joinedClassCode = (data['classCode'] ?? '') as String;
+          _miPercentages = miRaw != null
+              ? (miRaw['percentages'] as Map<String, dynamic>)
+                  .map((k, v) => MapEntry(k, (v as num).toDouble()))
+              : null;
+          _scenarioPercentages = scenarioRaw != null
+              ? (scenarioRaw['percentages'] as Map<String, dynamic>)
+                  .map((k, v) => MapEntry(k, (v as num).toDouble()))
+              : null;
         });
       }
     } catch (_) {}
@@ -58,50 +71,41 @@ class _StudentClassesScreenState extends State<StudentClassesScreen> {
     setState(() => _joining = true);
 
     try {
-      // Verify code exists in Firestore
-      final result = await FirestoreService.queryWhere('users', 'classCode', code);
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+
+      final result = await FirestoreService.queryWhere('classes', 'classCode', code);
       if (result.docs.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('err_invalid_class_code'.tr(),
-                style: GoogleFonts.hindSiliguri()),
-            backgroundColor: AppColors.error,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ));
+          _showSnack('err_invalid_class_code'.tr(), error: true);
         }
       } else {
-        // Save to student's profile
-        final uid = FirebaseAuth.instance.currentUser?.uid;
-        if (uid != null) {
-          await FirestoreService.updateDocument(
-              'users', uid, {'classCode': code});
-          if (mounted) {
-            setState(() => _joinedClassCode = code);
-            _codeController.clear();
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('class_joined'.tr(),
-                  style: GoogleFonts.hindSiliguri()),
-              backgroundColor: AppColors.primary,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-            ));
-          }
+        // Remove from old class first
+        if (_joinedClassCode.isNotEmpty) {
+          await _removeFromClass(uid, _joinedClassCode);
+        }
+
+        // Add to new class
+        final classDoc = result.docs.first;
+        final students = List<Map>.from((classDoc.data()['students'] as List?) ?? []);
+        if (!students.any((s) => s['id'] == uid)) {
+          students.add({'id': uid, 'name': _studentName});
+          await FirestoreService.updateDocument('classes', classDoc.id, {'students': students});
+        }
+
+        await FirestoreService.updateDocument('users', uid, {
+          'classCode': code,
+          'enrolledClasses': [code],
+        });
+
+        if (mounted) {
+          setState(() => _joinedClassCode = code);
+          _codeController.clear();
+          _showSnack('class_joined'.tr());
         }
       }
     } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('err_try_again'.tr(),
-              style: GoogleFonts.hindSiliguri()),
-          backgroundColor: AppColors.error,
-          behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ));
-      }
+      if (mounted) _showSnack('err_try_again'.tr(), error: true);
     }
     if (mounted) setState(() => _joining = false);
   }
@@ -110,9 +114,32 @@ class _StudentClassesScreenState extends State<StudentClassesScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     try {
-      await FirestoreService.updateDocument('users', uid, {'classCode': ''});
+      await _removeFromClass(uid, _joinedClassCode);
+      await FirestoreService.updateDocument('users', uid, {
+        'classCode': '',
+        'enrolledClasses': [],
+      });
       if (mounted) setState(() => _joinedClassCode = '');
     } catch (_) {}
+  }
+
+  Future<void> _removeFromClass(String uid, String code) async {
+    if (code.isEmpty) return;
+    final snap = await FirestoreService.queryWhere('classes', 'classCode', code);
+    if (snap.docs.isEmpty) return;
+    final classDoc = snap.docs.first;
+    final students = List<Map>.from((classDoc.data()['students'] as List?) ?? []);
+    students.removeWhere((s) => s['id'] == uid);
+    await FirestoreService.updateDocument('classes', classDoc.id, {'students': students});
+  }
+
+  void _showSnack(String msg, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: GoogleFonts.hindSiliguri()),
+      backgroundColor: error ? AppColors.error : AppColors.primary,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    ));
   }
 
   @override
@@ -216,9 +243,10 @@ class _StudentClassesScreenState extends State<StudentClassesScreen> {
                       // ── My progress ────────────────────
                       _SectionLabel('my_progress'.tr()),
                       const SizedBox(height: 10),
-                      _ProgressCard()
-                          .animate()
-                          .fadeIn(delay: 200.ms),
+                      _ProgressCard(
+                        miPercentages: _miPercentages,
+                        scenarioPercentages: _scenarioPercentages,
+                      ).animate().fadeIn(delay: 200.ms),
 
                       const SizedBox(height: 20),
 
@@ -427,10 +455,63 @@ class _JoinClassCard extends StatelessWidget {
 // ── Progress card ─────────────────────────────────────────────────────────────
 
 class _ProgressCard extends StatelessWidget {
-  const _ProgressCard();
+  const _ProgressCard({this.miPercentages, this.scenarioPercentages});
+  final Map<String, double>? miPercentages;
+  final Map<String, double>? scenarioPercentages;
+
+  static const _categoryOrder = [
+    'musical', 'visual', 'linguistic', 'logical',
+    'physical', 'interpersonal', 'intrapersonal', 'naturalistic',
+  ];
+
+  static const _barColors = [
+    AppColors.primary, AppColors.dustyGrape, AppColors.amethystSmoke,
+    AppColors.accent, Color(0xFF78A237), Color(0xFFD83C36),
+    Color(0xFF9B3DA0), Color(0xFF2196F3),
+  ];
+
+  String? _topKey(Map<String, double> pct) {
+    if (pct.isEmpty) return null;
+    return (pct.entries.toList()..sort((a, b) => b.value.compareTo(a.value))).first.key;
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isBn = context.locale.languageCode == 'bn';
+    final hasMi = miPercentages != null;
+    final hasScenario = scenarioPercentages != null;
+
+    if (!hasMi && !hasScenario) {
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withValues(alpha: 0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.insights_rounded, color: AppColors.amethystSmoke, size: 40),
+            const SizedBox(height: 10),
+            Text('no_progress_yet'.tr(),
+                style: GoogleFonts.hindSiliguri(
+                    fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+            const SizedBox(height: 6),
+            Text('take_test_first'.tr(),
+                textAlign: TextAlign.center,
+                style: GoogleFonts.hindSiliguri(
+                    fontSize: 12, color: AppColors.textSecondary, height: 1.5)),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -445,29 +526,106 @@ class _ProgressCard extends StatelessWidget {
         ],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.insights_rounded,
-              color: AppColors.amethystSmoke, size: 40),
-          const SizedBox(height: 10),
-          Text(
-            'no_progress_yet'.tr(),
-            style: GoogleFonts.hindSiliguri(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
+          if (hasMi) _ResultSection(
+            titleKey: 'mi_test',
+            icon: Icons.psychology_rounded,
+            percentages: miPercentages!,
+            categoryOrder: _categoryOrder,
+            barColors: _barColors,
+            topKey: _topKey(miPercentages!),
+            isBn: isBn,
           ),
-          const SizedBox(height: 6),
-          Text(
-            'take_test_first'.tr(),
-            textAlign: TextAlign.center,
-            style: GoogleFonts.hindSiliguri(
-                fontSize: 12,
-                color: AppColors.textSecondary,
-                height: 1.5),
+          if (hasMi && hasScenario) const SizedBox(height: 16),
+          if (hasScenario) _ResultSection(
+            titleKey: 'real_life_test_short',
+            icon: Icons.auto_stories_outlined,
+            percentages: scenarioPercentages!,
+            categoryOrder: _categoryOrder,
+            barColors: _barColors,
+            topKey: _topKey(scenarioPercentages!),
+            isBn: isBn,
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ResultSection extends StatelessWidget {
+  const _ResultSection({
+    required this.titleKey,
+    required this.icon,
+    required this.percentages,
+    required this.categoryOrder,
+    required this.barColors,
+    required this.topKey,
+    required this.isBn,
+  });
+
+  final String titleKey;
+  final IconData icon;
+  final Map<String, double> percentages;
+  final List<String> categoryOrder;
+  final List<Color> barColors;
+  final String? topKey;
+  final bool isBn;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, color: AppColors.primary, size: 16),
+            const SizedBox(width: 6),
+            Text(titleKey.tr(),
+                style: GoogleFonts.hindSiliguri(
+                    fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ...categoryOrder.asMap().entries.map((e) {
+          final idx = e.key;
+          final cat = e.value;
+          final pct = percentages[cat] ?? 0;
+          final color = barColors[idx % barColors.length];
+          final info = getIntelligenceByKey(cat);
+          final name = info != null ? (isBn ? info.nameBn : info.nameEn) : cat;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(name,
+                          style: GoogleFonts.hindSiliguri(
+                              fontSize: 11, color: AppColors.textSecondary)),
+                    ),
+                    Text('${pct.toStringAsFixed(0)}%',
+                        style: GoogleFonts.hindSiliguri(
+                            fontSize: 11, fontWeight: FontWeight.w700, color: color)),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: pct / 100,
+                    minHeight: 5,
+                    backgroundColor: color.withValues(alpha: 0.12),
+                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
     );
   }
 }

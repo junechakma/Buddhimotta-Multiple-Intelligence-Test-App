@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "977911538490",
+    "project_id": "buddhimottaf",
+    "storage_bucket": "buddhimottaf.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:977911538490:android:47a2199d6653e576992603",
+        "android_client_info": {
+          "package_name": "com.trimatrix.buddhimotta"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAzav4KCT3iitVm1F5MUFlZ2N9ggg7RSqc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

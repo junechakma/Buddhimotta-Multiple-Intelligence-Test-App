@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../models/intelligence_data.dart';
 import '../../models/question_model.dart';
+import '../../services/firestore_service.dart';
+import '../../services/guest_session.dart';
 import '../../services/local_results_service.dart';
 import '../../theme/app_colors.dart';
 
@@ -19,9 +22,16 @@ class MiTestScreen extends StatefulWidget {
 class _MiTestScreenState extends State<MiTestScreen> {
   List<List<Question>> _categoryQuestions = [];
   List<Map<int, int>> _answers = [];
+  // tracks how many times each answer was changed: [categoryIndex][questionIndex]
+  List<Map<int, int>> _answerChanges = [];
   int _currentCategory = 0;
   bool _loading = true;
   bool _saving = false;
+
+  // time tracking
+  DateTime? _testStartTime;
+  DateTime? _categoryStartTime;
+  final Map<int, int> _categoryTimeSeconds = {}; // categoryIndex → seconds spent
 
   static const _categoryOrder = [
     'musical', 'visual', 'linguistic', 'logical',
@@ -49,19 +59,38 @@ class _MiTestScreenState extends State<MiTestScreen> {
     final grouped = _categoryOrder
         .map((cat) => all.where((q) => q.category == cat).toList())
         .toList();
+    final now = DateTime.now();
     setState(() {
       _categoryQuestions = grouped;
       _answers = List.generate(grouped.length, (_) => {});
+      _answerChanges = List.generate(grouped.length, (_) => {});
+      _testStartTime = now;
+      _categoryStartTime = now;
       _loading = false;
     });
+  }
+
+  void _recordCategoryTime() {
+    if (_categoryStartTime == null) return;
+    final elapsed = DateTime.now().difference(_categoryStartTime!).inSeconds;
+    _categoryTimeSeconds[_currentCategory] = elapsed;
+    _categoryStartTime = DateTime.now();
   }
 
   bool get _currentComplete =>
       _categoryQuestions.isNotEmpty &&
       _answers[_currentCategory].length == _categoryQuestions[_currentCategory].length;
 
-  void _selectOption(int qi, int optIdx) =>
-      setState(() => _answers[_currentCategory][qi] = optIdx);
+  void _selectOption(int qi, int optIdx) {
+    setState(() {
+      if (_answers[_currentCategory].containsKey(qi)) {
+        // answer is being changed
+        _answerChanges[_currentCategory][qi] =
+            (_answerChanges[_currentCategory][qi] ?? 0) + 1;
+      }
+      _answers[_currentCategory][qi] = optIdx;
+    });
+  }
 
   void _next() {
     if (!_currentComplete) {
@@ -73,6 +102,7 @@ class _MiTestScreenState extends State<MiTestScreen> {
       ));
       return;
     }
+    _recordCategoryTime();
     if (_currentCategory < _categoryOrder.length - 1) {
       setState(() => _currentCategory++);
       _scrollController.animateTo(0,
@@ -99,6 +129,44 @@ class _MiTestScreenState extends State<MiTestScreen> {
     }
 
     await LocalResultsService.save(scores: scores, percentages: percentages);
+
+    if (!GuestSession.isGuest) {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        final totalSeconds = _testStartTime != null
+            ? DateTime.now().difference(_testStartTime!).inSeconds
+            : 0;
+
+        // Build per-category time map: { 'musical': 30, 'visual': 45, ... }
+        final categoryTimes = <String, int>{};
+        for (int i = 0; i < _categoryOrder.length; i++) {
+          categoryTimes[_categoryOrder[i]] = _categoryTimeSeconds[i] ?? 0;
+        }
+
+        // Total answer changes across all categories
+        final totalChanges = _answerChanges.fold<int>(
+          0, (sum, m) => sum + m.values.fold(0, (s, v) => s + v),
+        );
+
+        final totalQuestions = _categoryQuestions.fold<int>(
+          0, (sum, l) => sum + l.length,
+        );
+
+        await FirestoreService.updateDocument('users', uid, {
+          'miResults': {
+            'percentages': percentages,
+            'date': DateTime.now().toIso8601String(),
+            'totalTimeSeconds': totalSeconds,
+            'categoryTimeSeconds': categoryTimes,
+            'totalAnswerChanges': totalChanges,
+            'totalQuestions': totalQuestions,
+            'avgSecondsPerQuestion': totalQuestions > 0
+                ? (totalSeconds / totalQuestions).roundToDouble()
+                : 0,
+          },
+        });
+      }
+    }
 
     if (mounted) {
       context.go('/results', extra: {'scores': scores, 'percentages': percentages});

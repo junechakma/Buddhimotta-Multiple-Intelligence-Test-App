@@ -46,6 +46,6 @@ class DefaultFirebaseOptions {
     messagingSenderId: '793434997793',
     projectId: 'buddhimotta-e7d07',
     storageBucket: 'buddhimotta-e7d07.firebasestorage.app',
-    iosBundleId: 'com.example.buddhimotta',
+    iosBundleId: 'com.trimatrix.buddhimotta',
   );
 }

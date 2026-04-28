@@ -1,4 +1,4 @@
-package com.example.buddhimotta
+package com.trimatrix.buddhimotta
 
 import io.flutter.embedding.android.FlutterActivity
 

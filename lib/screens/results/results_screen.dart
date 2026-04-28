@@ -1,10 +1,13 @@
 import 'package:easy_localization/easy_localization.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../models/intelligence_data.dart';
+import '../../services/firestore_service.dart';
+import '../../services/guest_session.dart';
 import '../../services/local_results_service.dart';
 import '../../theme/app_colors.dart';
 
@@ -45,7 +48,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
   }
 
   Future<void> _loadResults() async {
-    // Fresh results passed from test screen
+    // 1. Fresh results passed directly from test screen
     if (widget.extra != null) {
       final pct = widget.extra!['percentages'] as Map<String, dynamic>?;
       if (pct != null) {
@@ -57,19 +60,53 @@ class _ResultsScreenState extends State<ResultsScreen> {
         return;
       }
     }
-    // Load from local storage
+
+    // 2. Local storage (fast, works offline)
     final saved = await LocalResultsService.load();
-    if (mounted) {
-      if (saved != null) {
-        final pct = saved['percentages'] as Map<String, dynamic>;
+    if (saved != null) {
+      final pct = saved['percentages'] as Map<String, dynamic>;
+      if (mounted) {
         setState(() {
           _percentages = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
           _testDate = saved['date'] as String?;
           _hasResults = true;
+          _loading = false;
         });
       }
-      setState(() => _loading = false);
+      return;
     }
+
+    // 3. Firestore fallback (new device / reinstall)
+    if (!GuestSession.isGuest) {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        try {
+          final doc = await FirestoreService.getDocument('users', uid);
+          if (doc.exists) {
+            final miRaw = doc.data()!['miResults'] as Map<String, dynamic>?;
+            if (miRaw != null) {
+              final pct = miRaw['percentages'] as Map<String, dynamic>;
+              final date = miRaw['date'] as String?;
+              // Cache locally so next load is instant
+              final parsed = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
+              await LocalResultsService.save(
+                scores: {for (final k in parsed.keys) k: 0},
+                percentages: parsed,
+              );
+              if (mounted) {
+                setState(() {
+                  _percentages = parsed;
+                  _testDate = date;
+                  _hasResults = true;
+                });
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (mounted) setState(() => _loading = false);
   }
 
   List<MapEntry<String, double>> get _sorted =>
@@ -208,28 +245,57 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
                         const SizedBox(height: 20),
 
-                        // ── Retake button ────────────────
-                        SizedBox(
-                          width: double.infinity,
-                          height: 52,
-                          child: ElevatedButton.icon(
-                            onPressed: () => context.push('/test'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius.circular(14)),
-                              elevation: 0,
+                        // ── Action buttons ────────────────
+                        Row(
+                          children: [
+                            Expanded(
+                              child: SizedBox(
+                                height: 52,
+                                child: OutlinedButton.icon(
+                                  onPressed: () => context.go('/home'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.primary,
+                                    side: const BorderSide(
+                                        color: AppColors.primary, width: 1.5),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(14)),
+                                  ),
+                                  icon: const Icon(Icons.home_rounded, size: 18),
+                                  label: Text(
+                                    'nav_home'.tr(),
+                                    style: GoogleFonts.hindSiliguri(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                              ),
                             ),
-                            icon: const Icon(Icons.refresh_rounded),
-                            label: Text(
-                              'retake_test'.tr(),
-                              style: GoogleFonts.hindSiliguri(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: SizedBox(
+                                height: 52,
+                                child: ElevatedButton.icon(
+                                  onPressed: () => context.push('/test'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppColors.primary,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(14)),
+                                    elevation: 0,
+                                  ),
+                                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                                  label: Text(
+                                    'retake_test'.tr(),
+                                    style: GoogleFonts.hindSiliguri(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
+                          ],
                         ).animate().fadeIn(delay: 400.ms),
 
                         const SizedBox(height: 32),

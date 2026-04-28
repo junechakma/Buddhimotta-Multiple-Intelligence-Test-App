@@ -8,7 +8,6 @@ import '../screens/auth/terms_screen.dart';
 import '../screens/home/home_screen.dart';
 import '../screens/about/about_screen.dart';
 import '../screens/intro/intro_screen.dart';
-import '../screens/placeholder_screen.dart';
 import '../screens/scenarios/scenarios_screen.dart';
 import '../screens/scenarios/scenario_result_screen.dart';
 import '../screens/results/results_screen.dart';
@@ -28,34 +27,34 @@ class AppRouter {
       final loggedIn =
           FirebaseAuth.instance.currentUser != null || GuestSession.isGuest;
       final loc = state.matchedLocation;
-      final isPublic =
-          loc == '/login' || loc == '/signup' || loc == '/terms';
+      final isPublic = loc == '/login' || loc == '/signup' || loc == '/terms';
 
       if (!loggedIn && !isPublic) return '/login';
       if (loggedIn && isPublic) return '/home';
       return null;
     },
     routes: [
-      GoRoute(path: '/login',     builder: (context, _) => const LoginScreen()),
-      GoRoute(path: '/signup',    builder: (context, _) => const SignupScreen()),
-      GoRoute(path: '/terms',     builder: (context, _) => const TermsScreen()),
-      GoRoute(path: '/home',      builder: (context, _) => const HomeScreen()),
-      GoRoute(path: '/intro',     builder: (context, _) => const IntroScreen()),
-      GoRoute(path: '/test',      builder: (context, _) => const MiTestScreen()),
-      GoRoute(path: '/scenarios', builder: (context, _) => const ScenariosScreen()),
+      GoRoute(path: '/login', builder: (context, _) => const LoginScreen()),
+      GoRoute(path: '/signup', builder: (context, _) => const SignupScreen()),
+      GoRoute(path: '/terms', builder: (context, _) => const TermsScreen()),
+      GoRoute(path: '/home', builder: (context, _) => const HomeScreen()),
+      GoRoute(path: '/intro', builder: (context, _) => const IntroScreen()),
+      GoRoute(path: '/test', builder: (context, _) => const MiTestScreen()),
+      GoRoute(
+        path: '/scenarios',
+        builder: (context, _) => const ScenariosScreen(),
+      ),
       GoRoute(
         path: '/scenario-results',
-        builder: (context, state) => ScenarioResultScreen(
-          extra: state.extra as Map<String, dynamic>?,
-        ),
+        builder: (context, state) =>
+            ScenarioResultScreen(extra: state.extra as Map<String, dynamic>?),
       ),
       GoRoute(
         path: '/results',
-        builder: (context, state) => ResultsScreen(
-          extra: state.extra as Map<String, dynamic>?,
-        ),
+        builder: (context, state) =>
+            ResultsScreen(extra: state.extra as Map<String, dynamic>?),
       ),
-      GoRoute(path: '/about',     builder: (context, _) => const AboutScreen()),
+      GoRoute(path: '/about', builder: (context, _) => const AboutScreen()),
     ],
     errorBuilder: (context, state) => Scaffold(
       body: Center(child: Text('পেজটি পাওয়া যায়নি: ${state.error}')),

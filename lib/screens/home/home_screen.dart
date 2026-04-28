@@ -99,59 +99,55 @@ class _HomeScreenState extends State<HomeScreen> {
         index: safeIndex.clamp(0, tabs.length - 1),
         children: tabs,
       ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: AppColors.cardBg,
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.primary.withValues(alpha: 0.10),
-              blurRadius: 16,
-              offset: const Offset(0, -4),
+      bottomNavigationBar: isGuest
+          ? null
+          : Container(
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withValues(alpha: 0.10),
+                    blurRadius: 16,
+                    offset: const Offset(0, -4),
+                  ),
+                ],
+              ),
+              child: BottomNavigationBar(
+                currentIndex: safeIndex,
+                onTap: (i) => setState(() => _selectedIndex = i),
+                selectedItemColor: AppColors.primary,
+                unselectedItemColor: AppColors.amethystSmoke,
+                backgroundColor: AppColors.cardBg,
+                elevation: 0,
+                type: BottomNavigationBarType.fixed,
+                selectedLabelStyle: GoogleFonts.hindSiliguri(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+                unselectedLabelStyle: GoogleFonts.hindSiliguri(fontSize: 12),
+                items: [
+                  BottomNavigationBarItem(
+                    icon: const Icon(Icons.home_outlined),
+                    activeIcon: const Icon(Icons.home_rounded),
+                    label: 'nav_home'.tr(),
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(_role == 'teacher'
+                        ? Icons.school_outlined
+                        : Icons.book_outlined),
+                    activeIcon: Icon(_role == 'teacher'
+                        ? Icons.school_rounded
+                        : Icons.book_rounded),
+                    label: (_role == 'teacher' ? 'nav_dashboard' : 'nav_classes').tr(),
+                  ),
+                  BottomNavigationBarItem(
+                    icon: const Icon(Icons.person_outline_rounded),
+                    activeIcon: const Icon(Icons.person_rounded),
+                    label: 'nav_profile'.tr(),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
-        child: BottomNavigationBar(
-          currentIndex: safeIndex,
-          onTap: isGuest ? null : (i) => setState(() => _selectedIndex = i),
-          selectedItemColor: AppColors.primary,
-          unselectedItemColor: AppColors.amethystSmoke,
-          backgroundColor: AppColors.cardBg,
-          elevation: 0,
-          type: BottomNavigationBarType.fixed,
-          selectedLabelStyle: GoogleFonts.hindSiliguri(
-            fontWeight: FontWeight.w700,
-            fontSize: 12,
-          ),
-          unselectedLabelStyle: GoogleFonts.hindSiliguri(fontSize: 12),
-          items: [
-            BottomNavigationBarItem(
-              icon: const Icon(Icons.home_outlined),
-              activeIcon: const Icon(Icons.home_rounded),
-              label: 'nav_home'.tr(),
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(isGuest
-                  ? Icons.book_outlined
-                  : _role == 'teacher'
-                      ? Icons.school_outlined
-                      : Icons.book_outlined),
-              activeIcon: Icon(isGuest
-                  ? Icons.book_rounded
-                  : _role == 'teacher'
-                      ? Icons.school_rounded
-                      : Icons.book_rounded),
-              label: isGuest
-                  ? 'nav_classes'.tr()
-                  : (_role == 'teacher' ? 'nav_dashboard' : 'nav_classes').tr(),
-            ),
-            BottomNavigationBarItem(
-              icon: const Icon(Icons.person_outline_rounded),
-              activeIcon: const Icon(Icons.person_rounded),
-              label: 'nav_profile'.tr(),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

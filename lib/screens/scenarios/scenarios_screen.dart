@@ -1,10 +1,13 @@
 import 'package:easy_localization/easy_localization.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../models/scenario_data.dart';
+import '../../services/firestore_service.dart';
+import '../../services/guest_session.dart';
 import '../../services/local_results_service.dart';
 import '../../theme/app_colors.dart';
 
@@ -123,6 +126,18 @@ class _ScenariosScreenState extends State<ScenariosScreen> {
       scores: Map<String, int>.from(_scores),
       percentages: percentages,
     );
+
+    if (!GuestSession.isGuest) {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        await FirestoreService.updateDocument('users', uid, {
+          'scenarioResults': {
+            'percentages': percentages,
+            'date': DateTime.now().toIso8601String(),
+          },
+        });
+      }
+    }
 
     if (mounted) {
       context.go('/scenario-results', extra: {
