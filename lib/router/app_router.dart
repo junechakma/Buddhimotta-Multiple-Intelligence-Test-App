@@ -11,6 +11,7 @@ import '../screens/intro/intro_screen.dart';
 import '../screens/scenarios/scenarios_screen.dart';
 import '../screens/scenarios/scenario_result_screen.dart';
 import '../screens/results/results_screen.dart';
+import '../screens/results/my_results_screen.dart';
 import '../screens/test/mi_test_screen.dart';
 import '../services/guest_session.dart';
 
@@ -48,6 +49,10 @@ class AppRouter {
         path: '/scenario-results',
         builder: (context, state) =>
             ScenarioResultScreen(extra: state.extra as Map<String, dynamic>?),
+      ),
+      GoRoute(
+        path: '/my-results',
+        builder: (context, _) => const MyResultsScreen(),
       ),
       GoRoute(
         path: '/results',

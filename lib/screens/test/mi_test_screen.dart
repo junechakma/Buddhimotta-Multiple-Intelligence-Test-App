@@ -32,6 +32,8 @@ class _MiTestScreenState extends State<MiTestScreen> {
   DateTime? _testStartTime;
   DateTime? _categoryStartTime;
   final Map<int, int> _categoryTimeSeconds = {}; // categoryIndex → seconds spent
+  // categoryIndex → questionIndex → seconds from category start when first answered
+  final List<Map<int, int>> _questionAnswerTimes = [];
 
   static const _categoryOrder = [
     'musical', 'visual', 'linguistic', 'logical',
@@ -64,6 +66,7 @@ class _MiTestScreenState extends State<MiTestScreen> {
       _categoryQuestions = grouped;
       _answers = List.generate(grouped.length, (_) => {});
       _answerChanges = List.generate(grouped.length, (_) => {});
+      _questionAnswerTimes.addAll(List.generate(grouped.length, (_) => {}));
       _testStartTime = now;
       _categoryStartTime = now;
       _loading = false;
@@ -84,9 +87,14 @@ class _MiTestScreenState extends State<MiTestScreen> {
   void _selectOption(int qi, int optIdx) {
     setState(() {
       if (_answers[_currentCategory].containsKey(qi)) {
-        // answer is being changed
         _answerChanges[_currentCategory][qi] =
             (_answerChanges[_currentCategory][qi] ?? 0) + 1;
+      } else {
+        // First time answering — record elapsed seconds from category start
+        if (_categoryStartTime != null) {
+          _questionAnswerTimes[_currentCategory][qi] =
+              DateTime.now().difference(_categoryStartTime!).inSeconds;
+        }
       }
       _answers[_currentCategory][qi] = optIdx;
     });
@@ -112,21 +120,70 @@ class _MiTestScreenState extends State<MiTestScreen> {
     }
   }
 
+  /// Applies the same boost/deduction as the original RN app:
+  /// - Highest ≤ 80%: top 3 get +15/+10/+5, bottom 3 get −10
+  /// - Highest ≤ 90% (> 80%): top 1 gets +5, bottom 3 get −10
+  /// - Highest > 90%: no adjustment
+  Map<String, double> _applyBoostDeduction(Map<String, double> raw) {
+    final sorted = raw.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final highest = sorted.first.value;
+    final result = <String, double>{};
+
+    for (int i = 0; i < sorted.length; i++) {
+      final key = sorted[i].key;
+      final val = sorted[i].value;
+      if (highest <= 80) {
+        if (i < 3) {
+          final boost = i == 0 ? 15.0 : i == 1 ? 10.0 : 5.0;
+          result[key] = (val + boost).clamp(0, 100);
+        } else if (i < sorted.length - 3) {
+          result[key] = val;
+        } else {
+          result[key] = (val - 10).clamp(0, 100);
+        }
+      } else if (highest <= 90) {
+        if (i == 0) {
+          result[key] = (val + 5).clamp(0, 100);
+        } else if (i < sorted.length - 3) {
+          result[key] = val;
+        } else {
+          result[key] = (val - 10).clamp(0, 100);
+        }
+      } else {
+        result[key] = val;
+      }
+    }
+    return result;
+  }
+
   Future<void> _submitTest() async {
     setState(() => _saving = true);
 
+    // ── Raw scores ──────────────────────────────────────────────────────
     final scores = <String, int>{};
-    final percentages = <String, double>{};
+    final rawPercentages = <String, double>{};
+
+    // answer indices per category for teacher view: { 'musical': [3,2,4,...] }
+    final answerIndices = <String, List<int>>{};
 
     for (int ci = 0; ci < _categoryOrder.length; ci++) {
       final cat = _categoryOrder[ci];
       int score = 0;
+      final indices = <int>[];
       for (int qi = 0; qi < _categoryQuestions[ci].length; qi++) {
-        score += _categoryQuestions[ci][qi].scoreForOption(_answers[ci][qi] ?? 0);
+        final optIdx = _answers[ci][qi] ?? 0;
+        score += _categoryQuestions[ci][qi].scoreForOption(optIdx);
+        indices.add(optIdx);
       }
       scores[cat] = score;
-      percentages[cat] = double.parse(((score / 70) * 100).toStringAsFixed(1));
+      rawPercentages[cat] = (score / 70) * 100;
+      answerIndices[cat] = indices;
     }
+
+    // ── Apply boost/deduction (matches original RN app) ─────────────────
+    final percentages = _applyBoostDeduction(rawPercentages)
+        .map((k, v) => MapEntry(k, double.parse(v.toStringAsFixed(1))));
 
     await LocalResultsService.save(scores: scores, percentages: percentages);
 
@@ -137,13 +194,20 @@ class _MiTestScreenState extends State<MiTestScreen> {
             ? DateTime.now().difference(_testStartTime!).inSeconds
             : 0;
 
-        // Build per-category time map: { 'musical': 30, 'visual': 45, ... }
         final categoryTimes = <String, int>{};
         for (int i = 0; i < _categoryOrder.length; i++) {
           categoryTimes[_categoryOrder[i]] = _categoryTimeSeconds[i] ?? 0;
         }
 
-        // Total answer changes across all categories
+        // per-question answer times relative to category start
+        final questionTimes = <String, List<int>>{};
+        for (int i = 0; i < _categoryOrder.length; i++) {
+          final cat = _categoryOrder[i];
+          final qCount = _categoryQuestions[i].length;
+          questionTimes[cat] = List.generate(
+              qCount, (qi) => _questionAnswerTimes[i][qi] ?? 0);
+        }
+
         final totalChanges = _answerChanges.fold<int>(
           0, (sum, m) => sum + m.values.fold(0, (s, v) => s + v),
         );
@@ -155,6 +219,10 @@ class _MiTestScreenState extends State<MiTestScreen> {
         await FirestoreService.updateDocument('users', uid, {
           'miResults': {
             'percentages': percentages,
+            'rawPercentages': rawPercentages
+                .map((k, v) => MapEntry(k, double.parse(v.toStringAsFixed(1)))),
+            'answerIndices': answerIndices,
+            'questionTimeSeconds': questionTimes,
             'date': DateTime.now().toIso8601String(),
             'totalTimeSeconds': totalSeconds,
             'categoryTimeSeconds': categoryTimes,
@@ -169,7 +237,16 @@ class _MiTestScreenState extends State<MiTestScreen> {
     }
 
     if (mounted) {
-      context.go('/results', extra: {'scores': scores, 'percentages': percentages});
+      // Build category time map for results display
+      final catTimesForResults = <String, int>{};
+      for (int i = 0; i < _categoryOrder.length; i++) {
+        catTimesForResults[_categoryOrder[i]] = _categoryTimeSeconds[i] ?? 0;
+      }
+      context.go('/results', extra: {
+        'scores': scores,
+        'percentages': percentages,
+        'categoryTimeSeconds': catTimesForResults,
+      });
     }
   }
 

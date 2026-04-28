@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../models/intelligence_data.dart';
+import '../../models/question_model.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 
@@ -16,6 +18,8 @@ class _StudentData {
   final int? miTotalSeconds;
   final double? miAvgSecondsPerQuestion;
   final int? miTotalAnswerChanges;
+  final Map<String, List<int>>? answerIndices; // category → [optionIndex per question]
+  final Map<String, List<int>>? questionTimeSeconds; // category → [seconds per question]
 
   const _StudentData({
     required this.id,
@@ -25,6 +29,8 @@ class _StudentData {
     this.miTotalSeconds,
     this.miAvgSecondsPerQuestion,
     this.miTotalAnswerChanges,
+    this.answerIndices,
+    this.questionTimeSeconds,
   });
 
   bool get hasMi => miPercentages != null;
@@ -69,12 +75,29 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
   String _teacherName = '';
   String _classCode = '';
   List<_StudentData> _students = [];
+  // category → ordered list of questions
+  Map<String, List<Question>> _questions = {};
   bool _loading = true;
+
+  static const _categoryOrder = [
+    'musical', 'visual', 'linguistic', 'logical',
+    'physical', 'interpersonal', 'intrapersonal', 'naturalistic',
+  ];
 
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  Future<void> _loadQuestions() async {
+    final jsonStr = await rootBundle.loadString('assets/data.json');
+    final raw = json.decode(jsonStr) as List<dynamic>;
+    final all = raw.map((e) => Question.fromJson(e as Map<String, dynamic>)).toList();
+    _questions = {
+      for (final cat in _categoryOrder)
+        cat: all.where((q) => q.category == cat).toList(),
+    };
   }
 
   Future<void> _loadData() async {
@@ -97,7 +120,9 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       _classCode = classesList.isNotEmpty ? classesList.first : '';
 
       if (_classCode.isNotEmpty) {
-        await _loadStudents();
+        await Future.wait([_loadStudents(), _loadQuestions()]);
+      } else {
+        await _loadQuestions();
       }
     } catch (_) {}
     if (mounted) setState(() => _loading = false);
@@ -140,6 +165,22 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
           miAvgSecondsPerQuestion:
               (miRaw?['avgSecondsPerQuestion'] as num?)?.toDouble(),
           miTotalAnswerChanges: miRaw?['totalAnswerChanges'] as int?,
+          answerIndices: miRaw?['answerIndices'] != null
+              ? (miRaw!['answerIndices'] as Map<String, dynamic>).map(
+                  (k, v) => MapEntry(
+                    k,
+                    (v as List<dynamic>).map((e) => (e as num).toInt()).toList(),
+                  ),
+                )
+              : null,
+          questionTimeSeconds: miRaw?['questionTimeSeconds'] != null
+              ? (miRaw!['questionTimeSeconds'] as Map<String, dynamic>).map(
+                  (k, v) => MapEntry(
+                    k,
+                    (v as List<dynamic>).map((e) => (e as num).toInt()).toList(),
+                  ),
+                )
+              : null,
         ));
       } catch (_) {
         loaded.add(_StudentData(id: sid, name: sname));
@@ -331,7 +372,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                         _EmptyStudentsCard().animate().fadeIn(delay: 250.ms)
                       else
                         ..._students.asMap().entries.map((e) =>
-                            _StudentCard(student: e.value, isBn: isBn)
+                            _StudentCard(student: e.value, isBn: isBn, questions: _questions)
                                 .animate()
                                 .fadeIn(
                                     delay: Duration(milliseconds: 100 * e.key),
@@ -351,9 +392,14 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
 // ── Student card ──────────────────────────────────────────────────────────────
 
 class _StudentCard extends StatelessWidget {
-  const _StudentCard({required this.student, required this.isBn});
+  const _StudentCard({
+    required this.student,
+    required this.isBn,
+    required this.questions,
+  });
   final _StudentData student;
   final bool isBn;
+  final Map<String, List<Question>> questions;
 
   static const _categoryOrder = [
     'musical', 'visual', 'linguistic', 'logical',
@@ -543,6 +589,17 @@ class _StudentCard extends StatelessWidget {
                 isBn: isBn,
               ),
             ],
+            if (student.hasMi && student.answerIndices != null && questions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _AnswerReviewSection(
+                answerIndices: student.answerIndices!,
+                questionTimeSeconds: student.questionTimeSeconds,
+                questions: questions,
+                categoryOrder: _categoryOrder,
+                barColors: _barColors,
+                isBn: isBn,
+              ),
+            ],
             if (!student.hasMi && !student.hasScenario)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -628,6 +685,269 @@ class _ScoreSection extends StatelessWidget {
           );
         }),
       ],
+    );
+  }
+}
+
+// ── Answer review section ─────────────────────────────────────────────────────
+
+class _AnswerReviewSection extends StatelessWidget {
+  const _AnswerReviewSection({
+    required this.answerIndices,
+    required this.questions,
+    required this.categoryOrder,
+    required this.barColors,
+    required this.isBn,
+    this.questionTimeSeconds,
+  });
+
+  final Map<String, List<int>> answerIndices;
+  final Map<String, List<int>>? questionTimeSeconds;
+  final Map<String, List<Question>> questions;
+  final List<String> categoryOrder;
+  final List<Color> barColors;
+  final bool isBn;
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.cardBg,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          leading: Icon(Icons.quiz_outlined,
+              size: 18, color: AppColors.dustyGrape),
+          title: Text(
+            'view_answers'.tr(),
+            style: GoogleFonts.hindSiliguri(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.dustyGrape),
+          ),
+          children: [
+            ...categoryOrder.asMap().entries.map((ce) {
+              final idx = ce.key;
+              final cat = ce.value;
+              final catAnswers = answerIndices[cat];
+              final catQuestions = questions[cat];
+              if (catAnswers == null ||
+                  catQuestions == null ||
+                  catAnswers.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              final color = barColors[idx % barColors.length];
+              final info = getIntelligenceByKey(cat);
+              final catName =
+                  info != null ? (isBn ? info.nameBn : info.nameEn) : cat;
+
+              return Theme(
+                data: Theme.of(context)
+                    .copyWith(dividerColor: Colors.transparent),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: color.withValues(alpha: 0.2)),
+                  ),
+                  child: ExpansionTile(
+                    tilePadding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                    childrenPadding:
+                        const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                    leading: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                          color: color, shape: BoxShape.circle),
+                    ),
+                    title: Text(
+                      catName,
+                      style: GoogleFonts.hindSiliguri(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: color),
+                    ),
+                    subtitle: Text(
+                      '${catAnswers.length} questions',
+                      style: GoogleFonts.hindSiliguri(
+                          fontSize: 10, color: AppColors.textSecondary),
+                    ),
+                    children: catAnswers.asMap().entries.map((qe) {
+                      final qi = qe.key;
+                      final selectedIdx = qe.value;
+                      final q = qi < catQuestions.length
+                          ? catQuestions[qi]
+                          : null;
+                      if (q == null) return const SizedBox.shrink();
+
+                      final qTimes = questionTimeSeconds?[cat];
+                      final timeSec = (qTimes != null && qi < qTimes.length)
+                          ? qTimes[qi]
+                          : null;
+                      final isQuickAnswer = timeSec != null && timeSec < 3;
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Question number + text + time badge
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  margin: const EdgeInsets.only(top: 1),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: color.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'Q${qi + 1}',
+                                    style: GoogleFonts.hindSiliguri(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: color),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    q.question,
+                                    style: GoogleFonts.hindSiliguri(
+                                        fontSize: 12,
+                                        color: AppColors.textPrimary,
+                                        height: 1.4),
+                                  ),
+                                ),
+                                if (timeSec != null) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 5, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: isQuickAnswer
+                                          ? AppColors.error.withValues(alpha: 0.12)
+                                          : Colors.grey.withValues(alpha: 0.10),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          isQuickAnswer
+                                              ? Icons.flash_on_rounded
+                                              : Icons.timer_outlined,
+                                          size: 10,
+                                          color: isQuickAnswer
+                                              ? AppColors.error
+                                              : AppColors.textSecondary,
+                                        ),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          '${timeSec}s',
+                                          style: GoogleFonts.hindSiliguri(
+                                              fontSize: 9,
+                                              color: isQuickAnswer
+                                                  ? AppColors.error
+                                                  : AppColors.textSecondary,
+                                              fontWeight: isQuickAnswer
+                                                  ? FontWeight.w700
+                                                  : FontWeight.normal),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            // Options
+                            ...q.options.asMap().entries.map((oe) {
+                              final oi = oe.key;
+                              final opt = oe.value;
+                              final isSelected = oi == selectedIdx;
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 3),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? color.withValues(alpha: 0.12)
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? color.withValues(alpha: 0.4)
+                                        : Colors.grey.withValues(alpha: 0.15),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      isSelected
+                                          ? Icons.radio_button_checked_rounded
+                                          : Icons.radio_button_off_rounded,
+                                      size: 13,
+                                      color: isSelected
+                                          ? color
+                                          : AppColors.textSecondary
+                                              .withValues(alpha: 0.4),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        opt,
+                                        style: GoogleFonts.hindSiliguri(
+                                            fontSize: 11,
+                                            color: isSelected
+                                                ? color
+                                                : AppColors.textSecondary,
+                                            fontWeight: isSelected
+                                                ? FontWeight.w600
+                                                : FontWeight.normal),
+                                      ),
+                                    ),
+                                    if (isSelected)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 5, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: color,
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          '${q.scoreForOption(oi)} pts',
+                                          style: GoogleFonts.hindSiliguri(
+                                              fontSize: 9,
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w700),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
     );
   }
 }

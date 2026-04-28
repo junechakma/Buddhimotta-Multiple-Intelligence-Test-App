@@ -21,6 +21,7 @@ class ResultsScreen extends StatefulWidget {
 
 class _ResultsScreenState extends State<ResultsScreen> {
   Map<String, double> _percentages = {};
+  Map<String, int> _categoryTimes = {};
   String? _testDate;
   bool _loading = true;
   bool _hasResults = false;
@@ -52,8 +53,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
     if (widget.extra != null) {
       final pct = widget.extra!['percentages'] as Map<String, dynamic>?;
       if (pct != null) {
+        final catTimes = widget.extra!['categoryTimeSeconds'] as Map<String, dynamic>?;
         setState(() {
           _percentages = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
+          if (catTimes != null) {
+            _categoryTimes = catTimes.map((k, v) => MapEntry(k, (v as num).toInt()));
+          }
           _hasResults = true;
           _loading = false;
         });
@@ -87,7 +92,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
             if (miRaw != null) {
               final pct = miRaw['percentages'] as Map<String, dynamic>;
               final date = miRaw['date'] as String?;
-              // Cache locally so next load is instant
+              final catTimesRaw = miRaw['categoryTimeSeconds'] as Map<String, dynamic>?;
               final parsed = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
               await LocalResultsService.save(
                 scores: {for (final k in parsed.keys) k: 0},
@@ -97,6 +102,10 @@ class _ResultsScreenState extends State<ResultsScreen> {
                 setState(() {
                   _percentages = parsed;
                   _testDate = date;
+                  if (catTimesRaw != null) {
+                    _categoryTimes = catTimesRaw
+                        .map((k, v) => MapEntry(k, (v as num).toInt()));
+                  }
                   _hasResults = true;
                 });
               }
@@ -138,38 +147,62 @@ class _ResultsScreenState extends State<ResultsScreen> {
                 SliverAppBar(
                   expandedHeight: 130,
                   pinned: true,
+                  automaticallyImplyLeading: false,
                   backgroundColor: AppColors.primary,
-                  leading: GestureDetector(
-                    onTap: () => context.go('/home'),
-                    child: const Icon(Icons.arrow_back_ios_new_rounded,
-                        color: Colors.white),
-                  ),
                   flexibleSpace: FlexibleSpaceBar(
-                    titlePadding:
-                        const EdgeInsets.fromLTRB(56, 0, 16, 14),
-                    title: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'results'.tr(),
-                          style: GoogleFonts.hindSiliguri(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
-                        if (_testDate != null && _testDate!.isNotEmpty)
-                          Text(
-                            _formatDate(_testDate),
-                            style: GoogleFonts.hindSiliguri(
-                                fontSize: 11, color: Colors.white60),
-                          ),
-                      ],
-                    ),
                     background: Container(
                       decoration: const BoxDecoration(
                           gradient: AppColors.primaryGradient),
+                      padding: const EdgeInsets.fromLTRB(20, 52, 20, 16),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              GestureDetector(
+                                onTap: () => context.go('/home'),
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        Colors.white.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Icon(
+                                      Icons.arrow_back_ios_new_rounded,
+                                      color: Colors.white,
+                                      size: 18),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'results'.tr(),
+                                      style: GoogleFonts.hindSiliguri(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.white),
+                                    ),
+                                    if (_testDate != null &&
+                                        _testDate!.isNotEmpty)
+                                      Text(
+                                        _formatDate(_testDate),
+                                        style: GoogleFonts.hindSiliguri(
+                                            fontSize: 11,
+                                            color: Colors.white60),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -242,6 +275,15 @@ class _ResultsScreenState extends State<ResultsScreen> {
                         _DisclaimerCard()
                             .animate()
                             .fadeIn(delay: 350.ms),
+
+                        if (_categoryTimes.isNotEmpty) ...[
+                          const SizedBox(height: 20),
+                          _TimingCard(
+                            categoryOrder: _categoryOrder,
+                            categoryTimes: _categoryTimes,
+                            isBn: isBn,
+                          ).animate().fadeIn(delay: 380.ms),
+                        ],
 
                         const SizedBox(height: 20),
 
@@ -774,6 +816,156 @@ class _NoResultsView extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Timing card ───────────────────────────────────────────────────────────────
+
+class _TimingCard extends StatelessWidget {
+  const _TimingCard({
+    required this.categoryOrder,
+    required this.categoryTimes,
+    required this.isBn,
+  });
+
+  final List<String> categoryOrder;
+  final Map<String, int> categoryTimes;
+  final bool isBn;
+
+  static const _barColors = [
+    AppColors.primary,
+    AppColors.dustyGrape,
+    AppColors.amethystSmoke,
+    AppColors.accent,
+    Color(0xFF78A237),
+    Color(0xFFD83C36),
+    Color(0xFF9B3DA0),
+    Color(0xFF2196F3),
+  ];
+
+  String _fmt(int sec) {
+    if (sec < 60) return '${sec}s';
+    return '${sec ~/ 60}m ${sec % 60}s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = categoryTimes.values.fold(0, (a, b) => a + b);
+    if (total == 0) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.06),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.timer_outlined,
+                  size: 18, color: AppColors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'test_timing'.tr(),
+                  style: GoogleFonts.hindSiliguri(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary),
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _fmt(total),
+                  style: GoogleFonts.hindSiliguri(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'test_timing_sub'.tr(),
+            style: GoogleFonts.hindSiliguri(
+                fontSize: 11, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 14),
+          ...categoryOrder.asMap().entries.map((e) {
+            final idx = e.key;
+            final cat = e.value;
+            final sec = categoryTimes[cat] ?? 0;
+            final frac = total > 0 ? sec / total : 0.0;
+            final color = _barColors[idx % _barColors.length];
+            final info = getIntelligenceByKey(cat);
+            final name = info != null
+                ? (isBn ? info.nameBn : info.nameEn)
+                : cat;
+            // flag if very fast (<3s avg over 7 questions per category ≈ <21s total)
+            final isQuick = sec > 0 && sec < 21;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(name,
+                            style: GoogleFonts.hindSiliguri(
+                                fontSize: 12,
+                                color: AppColors.textSecondary)),
+                      ),
+                      if (isQuick)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Icon(Icons.flash_on_rounded,
+                              size: 13, color: AppColors.error),
+                        ),
+                      Text(
+                        _fmt(sec),
+                        style: GoogleFonts.hindSiliguri(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: isQuick ? AppColors.error : color),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: frac,
+                      minHeight: 4,
+                      backgroundColor: color.withValues(alpha: 0.10),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                          isQuick ? AppColors.error : color),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
       ),
     );
   }

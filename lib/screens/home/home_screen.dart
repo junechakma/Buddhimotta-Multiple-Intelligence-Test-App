@@ -400,7 +400,7 @@ class _CardGrid extends StatelessWidget {
       subtitleKey: 'results_sub',
       icon: Icons.bar_chart_rounded,
       color: AppColors.accent,
-      route: '/results',
+      route: '/my-results',
     ),
   ];
 

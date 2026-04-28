@@ -143,6 +143,8 @@
   "changes": "{0} answer changes",
   "no_class_yet": "No Class Created",
   "no_class_yet_sub": "Your class code will appear here after your account is set up.",
+  "view_answers": "View Answers",
+  "selected_answer": "Selected",
   "class_code_copied": "Class code copied!",
   "coming_soon": "Coming Soon",
   "dashboard_coming_soon_sub": "Live student results, class analytics, and more are on the way.",
@@ -157,5 +159,17 @@
   "my_progress": "My Progress",
   "no_progress_yet": "No Progress Yet",
   "take_test_first": "Complete the MI test to see your progress shared with your teacher.",
-  "classes_coming_soon_sub": "Class leaderboards, shared results, and teacher feedback are coming soon."
+  "classes_coming_soon_sub": "Class leaderboards, shared results, and teacher feedback are coming soon.",
+
+  "scenario": "Scenario",
+  "choose_your_response": "Choose your response:",
+  "scenario_results_title": "Scenario Test Results",
+  "scenario_chart_subtitle": "Your intelligence distribution based on real-life choices",
+  "scenario_disclaimer": "These results reflect your intuitive preferences in real-life situations. They are not fixed measurements — everyone can grow in any area.",
+  "retake_scenario": "Retake Test",
+  "no_scenario_results_sub": "Take the Real Life Scenarios Test to see your results here.",
+  "take_scenario_test": "Take Scenario Test",
+  "test_timing": "Test Timing",
+  "test_timing_sub": "Time spent per section",
+  "avg_time_per_q": "avg/question"
 }
