@@ -1,11 +1,17 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../models/intelligence_data.dart';
+import '../../models/question_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/guest_session.dart';
 import '../../services/local_results_service.dart';
@@ -22,9 +28,13 @@ class ResultsScreen extends StatefulWidget {
 class _ResultsScreenState extends State<ResultsScreen> {
   Map<String, double> _percentages = {};
   Map<String, int> _categoryTimes = {};
+  Map<String, List<int>> _answerIndices = {};
+  Map<String, List<int>> _questionTimeSeconds = {};
+  Map<String, List<Question>> _questions = {};
   String? _testDate;
   bool _loading = true;
   bool _hasResults = false;
+  bool _exporting = false;
 
   static const _categoryOrder = [
     'musical', 'visual', 'linguistic', 'logical',
@@ -48,16 +58,38 @@ class _ResultsScreenState extends State<ResultsScreen> {
     _loadResults();
   }
 
+  Future<void> _loadQuestions() async {
+    final jsonStr = await rootBundle.loadString('assets/data.json');
+    final raw = json.decode(jsonStr) as List<dynamic>;
+    final all = raw.map((e) => Question.fromJson(e as Map<String, dynamic>)).toList();
+    _questions = {
+      for (final cat in _categoryOrder)
+        cat: all.where((q) => q.category == cat).toList(),
+    };
+  }
+
   Future<void> _loadResults() async {
+    await _loadQuestions();
+
     // 1. Fresh results passed directly from test screen
     if (widget.extra != null) {
       final pct = widget.extra!['percentages'] as Map<String, dynamic>?;
       if (pct != null) {
         final catTimes = widget.extra!['categoryTimeSeconds'] as Map<String, dynamic>?;
+        final ansIdx = widget.extra!['answerIndices'] as Map<String, dynamic>?;
+        final qTimes = widget.extra!['questionTimeSeconds'] as Map<String, dynamic>?;
         setState(() {
           _percentages = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
           if (catTimes != null) {
             _categoryTimes = catTimes.map((k, v) => MapEntry(k, (v as num).toInt()));
+          }
+          if (ansIdx != null) {
+            _answerIndices = ansIdx.map((k, v) => MapEntry(k,
+                (v as List<dynamic>).map((e) => (e as num).toInt()).toList()));
+          }
+          if (qTimes != null) {
+            _questionTimeSeconds = qTimes.map((k, v) => MapEntry(k,
+                (v as List<dynamic>).map((e) => (e as num).toInt()).toList()));
           }
           _hasResults = true;
           _loading = false;
@@ -66,14 +98,28 @@ class _ResultsScreenState extends State<ResultsScreen> {
       }
     }
 
-    // 2. Local storage (fast, works offline)
+    // 2. Local storage (fast, works offline / guest)
     final saved = await LocalResultsService.load();
     if (saved != null) {
       final pct = saved['percentages'] as Map<String, dynamic>;
+      final ansIdx = saved['answerIndices'] as Map<String, dynamic>?;
+      final qTimes = saved['questionTimeSeconds'] as Map<String, dynamic>?;
+      final catTimes = saved['categoryTimeSeconds'] as Map<String, dynamic>?;
       if (mounted) {
         setState(() {
           _percentages = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
           _testDate = saved['date'] as String?;
+          if (ansIdx != null) {
+            _answerIndices = ansIdx.map((k, v) => MapEntry(k,
+                (v as List<dynamic>).map((e) => (e as num).toInt()).toList()));
+          }
+          if (qTimes != null) {
+            _questionTimeSeconds = qTimes.map((k, v) => MapEntry(k,
+                (v as List<dynamic>).map((e) => (e as num).toInt()).toList()));
+          }
+          if (catTimes != null) {
+            _categoryTimes = catTimes.map((k, v) => MapEntry(k, (v as num).toInt()));
+          }
           _hasResults = true;
           _loading = false;
         });
@@ -93,6 +139,8 @@ class _ResultsScreenState extends State<ResultsScreen> {
               final pct = miRaw['percentages'] as Map<String, dynamic>;
               final date = miRaw['date'] as String?;
               final catTimesRaw = miRaw['categoryTimeSeconds'] as Map<String, dynamic>?;
+              final ansIdxRaw = miRaw['answerIndices'] as Map<String, dynamic>?;
+              final qTimesRaw = miRaw['questionTimeSeconds'] as Map<String, dynamic>?;
               final parsed = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
               await LocalResultsService.save(
                 scores: {for (final k in parsed.keys) k: 0},
@@ -105,6 +153,14 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   if (catTimesRaw != null) {
                     _categoryTimes = catTimesRaw
                         .map((k, v) => MapEntry(k, (v as num).toInt()));
+                  }
+                  if (ansIdxRaw != null) {
+                    _answerIndices = ansIdxRaw.map((k, v) => MapEntry(k,
+                        (v as List<dynamic>).map((e) => (e as num).toInt()).toList()));
+                  }
+                  if (qTimesRaw != null) {
+                    _questionTimeSeconds = qTimesRaw.map((k, v) => MapEntry(k,
+                        (v as List<dynamic>).map((e) => (e as num).toInt()).toList()));
                   }
                   _hasResults = true;
                 });
@@ -130,6 +186,76 @@ class _ResultsScreenState extends State<ResultsScreen> {
       return '${dt.day}/${dt.month}/${dt.year}';
     } catch (_) {
       return '';
+    }
+  }
+
+  String _csvEscape(String v) {
+    if (v.contains(',') || v.contains('"') || v.contains('\n')) {
+      return '"${v.replaceAll('"', '""')}"';
+    }
+    return v;
+  }
+
+  Future<void> _exportCsv() async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
+    try {
+      final buf = StringBuffer();
+
+      // Header
+      buf.writeln('Category,Question#,Question,SelectedOption,Score,Time(s)');
+
+      for (final cat in _categoryOrder) {
+        final qs = _questions[cat] ?? [];
+        final answers = _answerIndices[cat] ?? [];
+        final times = _questionTimeSeconds[cat] ?? [];
+        final info = getIntelligenceByKey(cat);
+        final catName = info?.nameEn ?? cat;
+
+        for (int qi = 0; qi < qs.length; qi++) {
+          final q = qs[qi];
+          final optIdx = qi < answers.length ? answers[qi] : -1;
+          final optText = optIdx >= 0 && optIdx < q.options.length
+              ? q.options[optIdx]
+              : '';
+          final score = optIdx >= 0 ? q.scoreForOption(optIdx) : 0;
+          final timeSec = qi < times.length ? times[qi] : 0;
+
+          buf.write(_csvEscape(catName));
+          buf.write(',');
+          buf.write(qi + 1);
+          buf.write(',');
+          buf.write(_csvEscape(q.question));
+          buf.write(',');
+          buf.write(_csvEscape(optText));
+          buf.write(',');
+          buf.write(score);
+          buf.write(',');
+          buf.writeln(timeSec);
+        }
+      }
+
+      // Summary rows
+      buf.writeln();
+      buf.writeln('Category,Percentage%,TimeSpent(s)');
+      for (final cat in _categoryOrder) {
+        final info = getIntelligenceByKey(cat);
+        final name = info?.nameEn ?? cat;
+        final pct = _percentages[cat] ?? 0;
+        final t = _categoryTimes[cat] ?? 0;
+        buf.writeln('${_csvEscape(name)},${pct.toStringAsFixed(1)},$t');
+      }
+
+      final csvString = buf.toString();
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/mi_results.csv');
+      await file.writeAsString(csvString);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/csv')],
+        subject: 'MI Test Results',
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
     }
   }
 
@@ -285,6 +411,21 @@ class _ResultsScreenState extends State<ResultsScreen> {
                           ).animate().fadeIn(delay: 380.ms),
                         ],
 
+                        // ── Per-question answers ──────────
+                        if (_answerIndices.isNotEmpty && _questions.isNotEmpty) ...[
+                          const SizedBox(height: 20),
+                          _SectionLabel('your_answers'.tr()),
+                          const SizedBox(height: 10),
+                          _AnswersCard(
+                            categoryOrder: _categoryOrder,
+                            barColors: _barColors,
+                            answerIndices: _answerIndices,
+                            questionTimeSeconds: _questionTimeSeconds,
+                            questions: _questions,
+                            isBn: isBn,
+                          ).animate().fadeIn(delay: 400.ms),
+                        ],
+
                         const SizedBox(height: 20),
 
                         // ── Action buttons ────────────────
@@ -340,12 +481,280 @@ class _ResultsScreenState extends State<ResultsScreen> {
                           ],
                         ).animate().fadeIn(delay: 400.ms),
 
+                        const SizedBox(height: 12),
+
+                        // ── CSV download ─────────────────
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: OutlinedButton.icon(
+                            onPressed: _exporting ? null : _exportCsv,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.dustyGrape,
+                              side: const BorderSide(
+                                  color: AppColors.dustyGrape, width: 1.5),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                            ),
+                            icon: _exporting
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        color: AppColors.dustyGrape,
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.download_rounded, size: 18),
+                            label: Text(
+                              'download_csv'.tr(),
+                              style: GoogleFonts.hindSiliguri(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ).animate().fadeIn(delay: 420.ms),
+
                         const SizedBox(height: 32),
                       ]),
                     ),
                   ),
               ],
             ),
+    );
+  }
+}
+
+// ── Per-question answers card ─────────────────────────────────────────────────
+
+class _AnswersCard extends StatelessWidget {
+  const _AnswersCard({
+    required this.categoryOrder,
+    required this.barColors,
+    required this.answerIndices,
+    required this.questionTimeSeconds,
+    required this.questions,
+    required this.isBn,
+  });
+
+  final List<String> categoryOrder;
+  final List<Color> barColors;
+  final Map<String, List<int>> answerIndices;
+  final Map<String, List<int>> questionTimeSeconds;
+  final Map<String, List<Question>> questions;
+  final bool isBn;
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withValues(alpha: 0.06),
+              blurRadius: 14,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: categoryOrder.asMap().entries.map((ce) {
+            final idx = ce.key;
+            final cat = ce.value;
+            final catAnswers = answerIndices[cat] ?? [];
+            final catQuestions = questions[cat] ?? [];
+            final catTimes = questionTimeSeconds[cat] ?? [];
+            if (catAnswers.isEmpty || catQuestions.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            final color = barColors[idx % barColors.length];
+            final info = getIntelligenceByKey(cat);
+            final catName = info != null
+                ? (isBn ? info.nameBn : info.nameEn)
+                : cat;
+
+            return Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                leading: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                ),
+                title: Text(
+                  catName,
+                  style: GoogleFonts.hindSiliguri(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: color),
+                ),
+                subtitle: Text(
+                  '${catAnswers.length} questions',
+                  style: GoogleFonts.hindSiliguri(
+                      fontSize: 11, color: AppColors.textSecondary),
+                ),
+                children: catAnswers.asMap().entries.map((qe) {
+                  final qi = qe.key;
+                  final selectedIdx = qe.value;
+                  final q = qi < catQuestions.length ? catQuestions[qi] : null;
+                  if (q == null) return const SizedBox.shrink();
+                  final timeSec = qi < catTimes.length ? catTimes[qi] : null;
+                  final isQuick = timeSec != null && timeSec < 3;
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.only(top: 1),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                'Q${qi + 1}',
+                                style: GoogleFonts.hindSiliguri(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: color),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                q.question,
+                                style: GoogleFonts.hindSiliguri(
+                                    fontSize: 12,
+                                    color: AppColors.textPrimary,
+                                    height: 1.4),
+                              ),
+                            ),
+                            if (timeSec != null) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: isQuick
+                                      ? AppColors.error.withValues(alpha: 0.12)
+                                      : Colors.grey.withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      isQuick
+                                          ? Icons.flash_on_rounded
+                                          : Icons.timer_outlined,
+                                      size: 10,
+                                      color: isQuick
+                                          ? AppColors.error
+                                          : AppColors.textSecondary,
+                                    ),
+                                    const SizedBox(width: 2),
+                                    Text(
+                                      '${timeSec}s',
+                                      style: GoogleFonts.hindSiliguri(
+                                          fontSize: 9,
+                                          color: isQuick
+                                              ? AppColors.error
+                                              : AppColors.textSecondary,
+                                          fontWeight: isQuick
+                                              ? FontWeight.w700
+                                              : FontWeight.normal),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        ...q.options.asMap().entries.map((oe) {
+                          final oi = oe.key;
+                          final opt = oe.value;
+                          final isSelected = oi == selectedIdx;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 3),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? color.withValues(alpha: 0.12)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: isSelected
+                                    ? color.withValues(alpha: 0.4)
+                                    : Colors.grey.withValues(alpha: 0.15),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  isSelected
+                                      ? Icons.radio_button_checked_rounded
+                                      : Icons.radio_button_off_rounded,
+                                  size: 13,
+                                  color: isSelected
+                                      ? color
+                                      : AppColors.textSecondary
+                                          .withValues(alpha: 0.4),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    opt,
+                                    style: GoogleFonts.hindSiliguri(
+                                        fontSize: 11,
+                                        color: isSelected
+                                            ? color
+                                            : AppColors.textSecondary,
+                                        fontWeight: isSelected
+                                            ? FontWeight.w600
+                                            : FontWeight.normal),
+                                  ),
+                                ),
+                                if (isSelected)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: color,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      '${q.scoreForOption(oi)} pts',
+                                      style: GoogleFonts.hindSiliguri(
+                                          fontSize: 9,
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w700),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
     );
   }
 }
@@ -380,9 +789,12 @@ class _BarChartCard extends StatelessWidget {
           ),
         ],
       ),
-      child: SizedBox(
-        height: 220,
-        child: BarChart(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: 220,
+            child: BarChart(
           BarChartData(
             maxY: 100,
             minY: 0,
@@ -473,6 +885,39 @@ class _BarChartCard extends StatelessWidget {
             ),
           ),
         ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            alignment: WrapAlignment.center,
+            children: categoryOrder.asMap().entries.map((e) {
+              final info = getIntelligenceByKey(e.value);
+              final name = info != null
+                  ? (isBn ? info.nameBn : info.nameEn)
+                  : e.value;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: barColors[e.key % barColors.length],
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    name,
+                    style: GoogleFonts.hindSiliguri(
+                        fontSize: 10, color: AppColors.textSecondary),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
+        ],
       ),
     );
   }
@@ -919,7 +1364,6 @@ class _TimingCard extends StatelessWidget {
             final name = info != null
                 ? (isBn ? info.nameBn : info.nameEn)
                 : cat;
-            // flag if very fast (<3s avg over 7 questions per category ≈ <21s total)
             final isQuick = sec > 0 && sec < 21;
 
             return Padding(

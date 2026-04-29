@@ -171,5 +171,10 @@
   "take_scenario_test": "Take Scenario Test",
   "test_timing": "Test Timing",
   "test_timing_sub": "Time spent per section",
-  "avg_time_per_q": "avg/question"
+  "avg_time_per_q": "avg/question",
+
+  "download_csv": "Download CSV",
+  "your_answers": "Your Answers",
+  "scenario_choices": "Your Scenario Choices",
+  "export_class_csv": "Export Class CSV"
 }

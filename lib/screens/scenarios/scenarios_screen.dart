@@ -23,6 +23,14 @@ class _ScenariosScreenState extends State<ScenariosScreen> {
   String? _selectedOptionId;
   bool _advancing = false;
 
+  // Timing
+  DateTime? _testStartTime;
+  DateTime? _scenarioStartTime;
+  final List<int> _scenarioTimesSeconds = [];
+
+  // Per-scenario choice (option id: a/b/c/d)
+  final List<String> _chosenOptionIds = [];
+
   // Accumulated raw scores across all scenarios
   final Map<String, int> _scores = {
     'musical': 0,
@@ -53,6 +61,9 @@ class _ScenariosScreenState extends State<ScenariosScreen> {
   void initState() {
     super.initState();
     _computeMaxPoints();
+    final now = DateTime.now();
+    _testStartTime = now;
+    _scenarioStartTime = now;
   }
 
   void _computeMaxPoints() {
@@ -82,6 +93,22 @@ class _ScenariosScreenState extends State<ScenariosScreen> {
   }
 
   void _applyScores() {
+    // Record the choice and elapsed time for this scenario
+    if (_chosenOptionIds.length <= _currentIndex) {
+      _chosenOptionIds.add(_selectedOptionId!);
+    } else {
+      _chosenOptionIds[_currentIndex] = _selectedOptionId!;
+    }
+    if (_scenarioStartTime != null) {
+      final elapsed = DateTime.now().difference(_scenarioStartTime!).inSeconds;
+      if (_scenarioTimesSeconds.length <= _currentIndex) {
+        _scenarioTimesSeconds.add(elapsed);
+      } else {
+        _scenarioTimesSeconds[_currentIndex] = elapsed;
+      }
+      _scenarioStartTime = DateTime.now();
+    }
+
     final option = _current.options.firstWhere((o) => o.id == _selectedOptionId);
     option.intelligencePoints.forEach((key, value) {
       _scores[key] = (_scores[key] ?? 0) + value;
@@ -122,9 +149,16 @@ class _ScenariosScreenState extends State<ScenariosScreen> {
       percentages[key] = max > 0 ? (_scores[key]! / max * 100).clamp(0, 100) : 0;
     }
 
+    final totalSeconds = _testStartTime != null
+        ? DateTime.now().difference(_testStartTime!).inSeconds
+        : 0;
+
     await LocalResultsService.saveScenario(
       scores: Map<String, int>.from(_scores),
       percentages: percentages,
+      choices: List<String>.from(_chosenOptionIds),
+      scenarioTimesSeconds: List<int>.from(_scenarioTimesSeconds),
+      totalTimeSeconds: totalSeconds,
     );
 
     if (!GuestSession.isGuest) {
@@ -133,6 +167,9 @@ class _ScenariosScreenState extends State<ScenariosScreen> {
         await FirestoreService.updateDocument('users', uid, {
           'scenarioResults': {
             'percentages': percentages,
+            'choices': List<String>.from(_chosenOptionIds),
+            'scenarioTimesSeconds': List<int>.from(_scenarioTimesSeconds),
+            'totalTimeSeconds': totalSeconds,
             'date': DateTime.now().toIso8601String(),
           },
         });
@@ -143,6 +180,9 @@ class _ScenariosScreenState extends State<ScenariosScreen> {
       context.go('/scenario-results', extra: {
         'percentages': percentages,
         'scores': Map<String, int>.from(_scores),
+        'choices': List<String>.from(_chosenOptionIds),
+        'scenarioTimesSeconds': List<int>.from(_scenarioTimesSeconds),
+        'totalTimeSeconds': totalSeconds,
       });
     }
   }

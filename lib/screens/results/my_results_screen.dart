@@ -1,10 +1,17 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../models/intelligence_data.dart';
+import '../../models/question_model.dart';
+import '../../models/scenario_data.dart';
 import '../../services/firestore_service.dart';
 import '../../services/guest_session.dart';
 import '../../services/local_results_service.dart';
@@ -20,9 +27,14 @@ class MyResultsScreen extends StatefulWidget {
 class _MyResultsScreenState extends State<MyResultsScreen> {
   Map<String, double> _miPct = {};
   Map<String, double> _scenarioPct = {};
+  Map<String, List<int>> _miAnswerIndices = {};
+  Map<String, List<int>> _miQuestionTimes = {};
+  List<String> _scenarioChoices = [];
+  List<int> _scenarioTimes = [];
   String? _miDate;
   String? _scenarioDate;
   bool _loading = true;
+  bool _exporting = false;
 
   static const _categoryOrder = [
     'musical', 'visual', 'linguistic', 'logical',
@@ -56,6 +68,16 @@ class _MyResultsScreenState extends State<MyResultsScreen> {
       final pct = miLocal['percentages'] as Map<String, dynamic>;
       _miPct = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
       _miDate = miLocal['date'] as String?;
+      final ai = miLocal['answerIndices'] as Map<String, dynamic>?;
+      if (ai != null) {
+        _miAnswerIndices = ai.map((k, v) => MapEntry(k,
+            (v as List<dynamic>).map((e) => (e as num).toInt()).toList()));
+      }
+      final qt = miLocal['questionTimeSeconds'] as Map<String, dynamic>?;
+      if (qt != null) {
+        _miQuestionTimes = qt.map((k, v) => MapEntry(k,
+            (v as List<dynamic>).map((e) => (e as num).toInt()).toList()));
+      }
     }
 
     // ── Scenario results ────────────────────────────────────────────────────────
@@ -64,6 +86,10 @@ class _MyResultsScreenState extends State<MyResultsScreen> {
       final pct = scLocal['percentages'] as Map<String, dynamic>;
       _scenarioPct = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
       _scenarioDate = scLocal['date'] as String?;
+      final ch = scLocal['choices'] as List<dynamic>?;
+      if (ch != null) _scenarioChoices = ch.cast<String>();
+      final st = scLocal['scenarioTimesSeconds'] as List<dynamic>?;
+      if (st != null) _scenarioTimes = st.map((e) => (e as num).toInt()).toList();
     }
 
     // ── Firestore fallback (new device / reinstall) ─────────────────────────────
@@ -108,6 +134,116 @@ class _MyResultsScreenState extends State<MyResultsScreen> {
     }
 
     if (mounted) setState(() => _loading = false);
+  }
+
+  String _csvEscape(String v) {
+    if (v.contains(',') || v.contains('"') || v.contains('\n')) {
+      return '"${v.replaceAll('"', '""')}"';
+    }
+    return v;
+  }
+
+  Future<void> _exportCsv() async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
+    try {
+      final jsonStr = await rootBundle.loadString('assets/data.json');
+      final raw = json.decode(jsonStr) as List<dynamic>;
+      final all = raw.map((e) => Question.fromJson(e as Map<String, dynamic>)).toList();
+      final questions = {
+        for (final cat in _categoryOrder)
+          cat: all.where((q) => q.category == cat).toList(),
+      };
+
+      final buf = StringBuffer();
+
+      // ── MI Test section ──────────────────────────────────────────────────
+      if (_miPct.isNotEmpty) {
+        buf.writeln('=== MI Test Results ===');
+        buf.writeln('Category,Percentage%');
+        for (final cat in _categoryOrder) {
+          final info = getIntelligenceByKey(cat);
+          buf.writeln('${_csvEscape(info?.nameEn ?? cat)},${(_miPct[cat] ?? 0).toStringAsFixed(1)}');
+        }
+        buf.writeln();
+
+        if (_miAnswerIndices.isNotEmpty) {
+          buf.writeln('Category,Question#,Question,SelectedOption,Score,Time(s)');
+          for (final cat in _categoryOrder) {
+            final qs = questions[cat] ?? [];
+            final answers = _miAnswerIndices[cat] ?? [];
+            final times = _miQuestionTimes[cat] ?? [];
+            final info = getIntelligenceByKey(cat);
+            final catName = info?.nameEn ?? cat;
+            for (int qi = 0; qi < qs.length; qi++) {
+              final q = qs[qi];
+              final optIdx = qi < answers.length ? answers[qi] : -1;
+              final optText = optIdx >= 0 && optIdx < q.options.length
+                  ? q.options[optIdx]
+                  : '';
+              final score = optIdx >= 0 ? q.scoreForOption(optIdx) : 0;
+              final timeSec = qi < times.length ? times[qi] : 0;
+              buf.write(_csvEscape(catName));
+              buf.write(',');
+              buf.write(qi + 1);
+              buf.write(',');
+              buf.write(_csvEscape(q.question));
+              buf.write(',');
+              buf.write(_csvEscape(optText));
+              buf.write(',');
+              buf.write(score);
+              buf.write(',');
+              buf.writeln(timeSec);
+            }
+          }
+          buf.writeln();
+        }
+      }
+
+      // ── Scenario Test section ────────────────────────────────────────────
+      if (_scenarioPct.isNotEmpty) {
+        buf.writeln('=== Scenario Test Results ===');
+        buf.writeln('Category,Percentage%');
+        for (final cat in _categoryOrder) {
+          final info = getIntelligenceByKey(cat);
+          buf.writeln('${_csvEscape(info?.nameEn ?? cat)},${(_scenarioPct[cat] ?? 0).toStringAsFixed(1)}');
+        }
+        buf.writeln();
+
+        if (_scenarioChoices.isNotEmpty) {
+          buf.writeln('Scenario#,Title,Question/Situation,ChosenOption,ChosenOptionText,Time(s)');
+          for (int i = 0; i < scenarios.length; i++) {
+            final s = scenarios[i];
+            final choiceId = i < _scenarioChoices.length ? _scenarioChoices[i] : '';
+            final optionText = choiceId.isNotEmpty
+                ? (s.options.where((o) => o.id == choiceId).firstOrNull?.text ?? '')
+                : '';
+            final timeSec = i < _scenarioTimes.length ? _scenarioTimes[i] : 0;
+            buf.write(i + 1);
+            buf.write(',');
+            buf.write(_csvEscape(s.title));
+            buf.write(',');
+            buf.write(_csvEscape(s.description));
+            buf.write(',');
+            buf.write(_csvEscape(choiceId.toUpperCase()));
+            buf.write(',');
+            buf.write(_csvEscape(optionText));
+            buf.write(',');
+            buf.writeln(timeSec);
+          }
+        }
+      }
+
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/my_results.csv');
+      await file.writeAsString(buf.toString());
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/csv')],
+        subject: 'My Intelligence Results',
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   String _fmtDate(String? iso) {
@@ -235,6 +371,40 @@ class _MyResultsScreenState extends State<MyResultsScreen> {
                           .animate()
                           .fadeIn(delay: 120.ms, duration: 400.ms)
                           .slideY(begin: 0.06, end: 0, delay: 120.ms),
+
+                      // ── CSV download ─────────────────────────────────────
+                      if (_hasMi || _hasScenario) ...[
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: OutlinedButton.icon(
+                            onPressed: _exporting ? null : _exportCsv,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.dustyGrape,
+                              side: const BorderSide(
+                                  color: AppColors.dustyGrape, width: 1.5),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                            ),
+                            icon: _exporting
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        color: AppColors.dustyGrape,
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.download_rounded, size: 18),
+                            label: Text(
+                              'download_csv'.tr(),
+                              style: GoogleFonts.hindSiliguri(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ).animate().fadeIn(delay: 250.ms),
+                      ],
 
                       const SizedBox(height: 32),
                     ]),

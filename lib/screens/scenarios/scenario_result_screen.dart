@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -5,7 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../models/intelligence_data.dart';
+import '../../models/scenario_data.dart';
 import '../../services/firestore_service.dart';
 import '../../services/guest_session.dart';
 import '../../services/local_results_service.dart';
@@ -21,9 +25,13 @@ class ScenarioResultScreen extends StatefulWidget {
 
 class _ScenarioResultScreenState extends State<ScenarioResultScreen> {
   Map<String, double> _percentages = {};
+  List<String> _choices = [];
+  List<int> _scenarioTimesSeconds = [];
+  int _totalTimeSeconds = 0;
   String? _testDate;
   bool _loading = true;
   bool _hasResults = false;
+  bool _exporting = false;
   int _touchedIndex = -1;
 
   static const _categoryOrder = [
@@ -53,8 +61,16 @@ class _ScenarioResultScreenState extends State<ScenarioResultScreen> {
     if (widget.extra != null) {
       final pct = widget.extra!['percentages'] as Map<String, dynamic>?;
       if (pct != null) {
+        final choicesRaw = widget.extra!['choices'] as List<dynamic>?;
+        final timesRaw = widget.extra!['scenarioTimesSeconds'] as List<dynamic>?;
+        final totalTime = widget.extra!['totalTimeSeconds'] as int? ?? 0;
         setState(() {
           _percentages = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
+          if (choicesRaw != null) _choices = choicesRaw.cast<String>();
+          if (timesRaw != null) {
+            _scenarioTimesSeconds = timesRaw.map((e) => (e as num).toInt()).toList();
+          }
+          _totalTimeSeconds = totalTime;
           _hasResults = true;
           _loading = false;
         });
@@ -66,9 +82,16 @@ class _ScenarioResultScreenState extends State<ScenarioResultScreen> {
     final data = await LocalResultsService.loadScenario();
     if (data != null && mounted) {
       final pct = data['percentages'] as Map<String, dynamic>;
+      final choicesRaw = data['choices'] as List<dynamic>?;
+      final timesRaw = data['scenarioTimesSeconds'] as List<dynamic>?;
       setState(() {
         _percentages = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
         _testDate = data['date'] as String?;
+        if (choicesRaw != null) _choices = choicesRaw.cast<String>();
+        if (timesRaw != null) {
+          _scenarioTimesSeconds = timesRaw.map((e) => (e as num).toInt()).toList();
+        }
+        _totalTimeSeconds = data['totalTimeSeconds'] as int? ?? 0;
         _hasResults = true;
       });
     }
@@ -84,6 +107,8 @@ class _ScenarioResultScreenState extends State<ScenarioResultScreen> {
             if (scRaw != null) {
               final pct = scRaw['percentages'] as Map<String, dynamic>;
               final parsed = pct.map((k, v) => MapEntry(k, (v as num).toDouble()));
+              final choicesRaw = scRaw['choices'] as List<dynamic>?;
+              final timesRaw = scRaw['scenarioTimesSeconds'] as List<dynamic>?;
               await LocalResultsService.saveScenario(
                 scores: {for (final k in parsed.keys) k: 0},
                 percentages: parsed,
@@ -92,6 +117,12 @@ class _ScenarioResultScreenState extends State<ScenarioResultScreen> {
                 setState(() {
                   _percentages = parsed;
                   _testDate = scRaw['date'] as String?;
+                  if (choicesRaw != null) _choices = choicesRaw.cast<String>();
+                  if (timesRaw != null) {
+                    _scenarioTimesSeconds =
+                        timesRaw.map((e) => (e as num).toInt()).toList();
+                  }
+                  _totalTimeSeconds = scRaw['totalTimeSeconds'] as int? ?? 0;
                   _hasResults = true;
                 });
               }
@@ -102,6 +133,70 @@ class _ScenarioResultScreenState extends State<ScenarioResultScreen> {
     }
 
     if (mounted) setState(() => _loading = false);
+  }
+
+  String _csvEscape(String v) {
+    if (v.contains(',') || v.contains('"') || v.contains('\n')) {
+      return '"${v.replaceAll('"', '""')}"';
+    }
+    return v;
+  }
+
+  Future<void> _exportCsv() async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
+    try {
+      final buf = StringBuffer();
+      buf.writeln('Scenario#,Title,Question/Situation,ChosenOption,ChosenOptionText,Time(s)');
+
+      for (int i = 0; i < scenarios.length; i++) {
+        final s = scenarios[i];
+        final choiceId = i < _choices.length ? _choices[i] : '';
+        final optionText = choiceId.isNotEmpty
+            ? (s.options.where((o) => o.id == choiceId).firstOrNull?.text ?? '')
+            : '';
+        final timeSec = i < _scenarioTimesSeconds.length
+            ? _scenarioTimesSeconds[i]
+            : 0;
+
+        buf.write(i + 1);
+        buf.write(',');
+        buf.write(_csvEscape(s.title));
+        buf.write(',');
+        buf.write(_csvEscape(s.description));
+        buf.write(',');
+        buf.write(_csvEscape(choiceId.toUpperCase()));
+        buf.write(',');
+        buf.write(_csvEscape(optionText));
+        buf.write(',');
+        buf.writeln(timeSec);
+      }
+
+      buf.writeln();
+      buf.writeln('Category,Percentage%');
+      for (final cat in _categoryOrder) {
+        final info = getIntelligenceByKey(cat);
+        final name = info?.nameEn ?? cat;
+        final pct = _percentages[cat] ?? 0;
+        buf.writeln('${_csvEscape(name)},${pct.toStringAsFixed(1)}');
+      }
+
+      if (_totalTimeSeconds > 0) {
+        buf.writeln();
+        buf.writeln('Total Time (s),$_totalTimeSeconds');
+      }
+
+      final csvString = buf.toString();
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/scenario_results.csv');
+      await file.writeAsString(csvString);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/csv')],
+        subject: 'Scenario Test Results',
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   List<MapEntry<String, double>> get _sorted =>
@@ -303,6 +398,62 @@ class _ScenarioResultScreenState extends State<ScenarioResultScreen> {
                           ),
                         ).animate().fadeIn(delay: 340.ms),
 
+                        // ── Timing summary ──────────────────────
+                        if (_totalTimeSeconds > 0) ...[
+                          const SizedBox(height: 16),
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.dustyGrape.withValues(alpha: 0.07),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.timer_outlined,
+                                    size: 18, color: AppColors.dustyGrape),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'test_timing'.tr(),
+                                    style: GoogleFonts.hindSiliguri(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppColors.textPrimary),
+                                  ),
+                                ),
+                                Text(
+                                  _totalTimeSeconds < 60
+                                      ? '${_totalTimeSeconds}s'
+                                      : '${_totalTimeSeconds ~/ 60}m ${_totalTimeSeconds % 60}s',
+                                  style: GoogleFonts.hindSiliguri(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.dustyGrape),
+                                ),
+                              ],
+                            ),
+                          ).animate().fadeIn(delay: 360.ms),
+                        ],
+
+                        // ── Choices per scenario ─────────────────
+                        if (_choices.isNotEmpty) ...[
+                          const SizedBox(height: 20),
+                          _SectionLabel('scenario_choices'.tr(),
+                              color: AppColors.dustyGrape),
+                          const SizedBox(height: 12),
+                          _ScenarioChoicesCard(
+                            choices: _choices,
+                            scenarioTimes: _scenarioTimesSeconds,
+                          ).animate().fadeIn(delay: 380.ms),
+                        ],
+
                         const SizedBox(height: 20),
 
                         // ── Action buttons ──────────────────────
@@ -358,6 +509,39 @@ class _ScenarioResultScreenState extends State<ScenarioResultScreen> {
                             ),
                           ],
                         ).animate().fadeIn(delay: 400.ms),
+
+                        const SizedBox(height: 12),
+
+                        // ── CSV download ─────────────────────────
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: OutlinedButton.icon(
+                            onPressed: _exporting ? null : _exportCsv,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.dustyGrape,
+                              side: const BorderSide(
+                                  color: AppColors.dustyGrape, width: 1.5),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                            ),
+                            icon: _exporting
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        color: AppColors.dustyGrape,
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.download_rounded, size: 18),
+                            label: Text(
+                              'download_csv'.tr(),
+                              style: GoogleFonts.hindSiliguri(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ).animate().fadeIn(delay: 420.ms),
 
                         const SizedBox(height: 32),
                       ]),
@@ -431,9 +615,12 @@ class _ChartCard extends StatelessWidget {
           ),
         ],
       ),
-      child: SizedBox(
-        height: 230,
-        child: BarChart(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: 230,
+            child: BarChart(
           BarChartData(
             barGroups: bars,
             maxY: 100,
@@ -508,6 +695,39 @@ class _ChartCard extends StatelessWidget {
             ),
           ),
         ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            alignment: WrapAlignment.center,
+            children: categoryOrder.asMap().entries.map((e) {
+              final info = getIntelligenceByKey(e.value);
+              final name = info != null
+                  ? (isBn ? info.nameBn : info.nameEn)
+                  : e.value;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: barColors[e.key % barColors.length],
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    name,
+                    style: GoogleFonts.hindSiliguri(
+                        fontSize: 10, color: AppColors.textSecondary),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
+        ],
       ),
     );
   }
@@ -841,6 +1061,150 @@ class _Chip extends StatelessWidget {
       child: Text(label,
           style: GoogleFonts.hindSiliguri(
               fontSize: 12, color: color, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+// ── Scenario choices card ─────────────────────────────────────────────────────
+
+class _ScenarioChoicesCard extends StatelessWidget {
+  const _ScenarioChoicesCard({
+    required this.choices,
+    required this.scenarioTimes,
+  });
+
+  final List<String> choices;
+  final List<int> scenarioTimes;
+
+  static const _optionLabels = {'a': 'ক', 'b': 'খ', 'c': 'গ', 'd': 'ঘ'};
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.dustyGrape.withValues(alpha: 0.07),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: scenarios.asMap().entries.map((e) {
+          final idx = e.key;
+          final scenario = e.value;
+          final choiceId = idx < choices.length ? choices[idx] : '';
+          final option = choiceId.isNotEmpty
+              ? scenario.options.where((o) => o.id == choiceId).firstOrNull
+              : null;
+          final timeSec = idx < scenarioTimes.length ? scenarioTimes[idx] : null;
+          final isFirst = idx == 0;
+
+          return Container(
+            decoration: BoxDecoration(
+              border: isFirst
+                  ? null
+                  : Border(
+                      top: BorderSide(
+                          color: Colors.grey.withValues(alpha: 0.1))),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: AppColors.dustyGrape.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '${idx + 1}',
+                    style: GoogleFonts.hindSiliguri(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.dustyGrape),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        scenario.title,
+                        style: GoogleFonts.hindSiliguri(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary),
+                      ),
+                      if (option != null) ...[
+                        const SizedBox(height: 4),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.dustyGrape,
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: Text(
+                                _optionLabels[choiceId] ??
+                                    choiceId.toUpperCase(),
+                                style: GoogleFonts.hindSiliguri(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                option.text,
+                                style: GoogleFonts.hindSiliguri(
+                                    fontSize: 12,
+                                    color: AppColors.textSecondary,
+                                    height: 1.4),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (timeSec != null) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.dustyGrape.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      timeSec < 60
+                          ? '${timeSec}s'
+                          : '${timeSec ~/ 60}m ${timeSec % 60}s',
+                      style: GoogleFonts.hindSiliguri(
+                          fontSize: 10,
+                          color: AppColors.dustyGrape,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 }

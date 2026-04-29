@@ -185,29 +185,36 @@ class _MiTestScreenState extends State<MiTestScreen> {
     final percentages = _applyBoostDeduction(rawPercentages)
         .map((k, v) => MapEntry(k, double.parse(v.toStringAsFixed(1))));
 
-    await LocalResultsService.save(scores: scores, percentages: percentages);
+    // Compute timing data (needed for both local save and Firestore)
+    final totalSeconds = _testStartTime != null
+        ? DateTime.now().difference(_testStartTime!).inSeconds
+        : 0;
+
+    final categoryTimes = <String, int>{};
+    for (int i = 0; i < _categoryOrder.length; i++) {
+      categoryTimes[_categoryOrder[i]] = _categoryTimeSeconds[i] ?? 0;
+    }
+
+    final questionTimes = <String, List<int>>{};
+    for (int i = 0; i < _categoryOrder.length; i++) {
+      final cat = _categoryOrder[i];
+      final qCount = _categoryQuestions[i].length;
+      questionTimes[cat] = List.generate(
+          qCount, (qi) => _questionAnswerTimes[i][qi] ?? 0);
+    }
+
+    await LocalResultsService.save(
+      scores: scores,
+      percentages: percentages,
+      answerIndices: answerIndices,
+      categoryTimeSeconds: categoryTimes,
+      questionTimeSeconds: questionTimes,
+      totalTimeSeconds: totalSeconds,
+    );
 
     if (!GuestSession.isGuest) {
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid != null) {
-        final totalSeconds = _testStartTime != null
-            ? DateTime.now().difference(_testStartTime!).inSeconds
-            : 0;
-
-        final categoryTimes = <String, int>{};
-        for (int i = 0; i < _categoryOrder.length; i++) {
-          categoryTimes[_categoryOrder[i]] = _categoryTimeSeconds[i] ?? 0;
-        }
-
-        // per-question answer times relative to category start
-        final questionTimes = <String, List<int>>{};
-        for (int i = 0; i < _categoryOrder.length; i++) {
-          final cat = _categoryOrder[i];
-          final qCount = _categoryQuestions[i].length;
-          questionTimes[cat] = List.generate(
-              qCount, (qi) => _questionAnswerTimes[i][qi] ?? 0);
-        }
-
         final totalChanges = _answerChanges.fold<int>(
           0, (sum, m) => sum + m.values.fold(0, (s, v) => s + v),
         );
@@ -237,15 +244,12 @@ class _MiTestScreenState extends State<MiTestScreen> {
     }
 
     if (mounted) {
-      // Build category time map for results display
-      final catTimesForResults = <String, int>{};
-      for (int i = 0; i < _categoryOrder.length; i++) {
-        catTimesForResults[_categoryOrder[i]] = _categoryTimeSeconds[i] ?? 0;
-      }
       context.go('/results', extra: {
         'scores': scores,
         'percentages': percentages,
-        'categoryTimeSeconds': catTimesForResults,
+        'categoryTimeSeconds': categoryTimes,
+        'answerIndices': answerIndices,
+        'questionTimeSeconds': questionTimes,
       });
     }
   }

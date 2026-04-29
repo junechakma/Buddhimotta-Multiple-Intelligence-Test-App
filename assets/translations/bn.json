@@ -171,5 +171,10 @@
   "take_scenario_test": "সিনারিও টেস্ট দিন",
   "test_timing": "পরীক্ষার সময়",
   "test_timing_sub": "প্রতিটি বিভাগে কতক্ষণ সময় লেগেছে",
-  "avg_time_per_q": "গড়/প্রশ্ন"
+  "avg_time_per_q": "গড়/প্রশ্ন",
+
+  "download_csv": "CSV ডাউনলোড",
+  "your_answers": "আপনার উত্তরসমূহ",
+  "scenario_choices": "আপনার পছন্দসমূহ",
+  "export_class_csv": "ক্লাস CSV এক্সপোর্ট"
 }

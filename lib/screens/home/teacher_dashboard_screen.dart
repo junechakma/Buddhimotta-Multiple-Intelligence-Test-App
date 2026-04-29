@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../models/intelligence_data.dart';
 import '../../models/question_model.dart';
 import '../../services/firestore_service.dart';
@@ -75,9 +78,9 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
   String _teacherName = '';
   String _classCode = '';
   List<_StudentData> _students = [];
-  // category → ordered list of questions
   Map<String, List<Question>> _questions = {};
   bool _loading = true;
+  bool _exporting = false;
 
   static const _categoryOrder = [
     'musical', 'visual', 'linguistic', 'logical',
@@ -188,6 +191,91 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
     }
 
     if (mounted) setState(() => _students = loaded);
+  }
+
+  String _csvEscape(String v) {
+    if (v.contains(',') || v.contains('"') || v.contains('\n')) {
+      return '"${v.replaceAll('"', '""')}"';
+    }
+    return v;
+  }
+
+  Future<void> _exportCsv() async {
+    if (_exporting || _students.isEmpty) return;
+    setState(() => _exporting = true);
+    try {
+      final buf = StringBuffer();
+
+      // ── Header ──────────────────────────────────────────────────────────
+      final headerCols = <String>['Student Name'];
+      for (final cat in _categoryOrder) {
+        final info = getIntelligenceByKey(cat);
+        headerCols.add(_csvEscape('${info?.nameEn ?? cat} %'));
+      }
+      for (final cat in _categoryOrder) {
+        final qs = _questions[cat] ?? [];
+        for (int qi = 0; qi < qs.length; qi++) {
+          final questionText = qs[qi].question;
+          headerCols.add(_csvEscape('$questionText [Option 1-5]'));
+          headerCols.add(_csvEscape('$questionText [Score]'));
+          headerCols.add(_csvEscape('$questionText [Time(s)]'));
+        }
+      }
+      headerCols.addAll(['TotalTime(s)', 'AvgTime/Q(s)', 'AnswerChanges']);
+      buf.writeln(headerCols.join(','));
+
+      // ── Rows ─────────────────────────────────────────────────────────────
+      for (final student in _students) {
+        final row = <String>[_csvEscape(student.name)];
+
+        // Category percentages
+        for (final cat in _categoryOrder) {
+          final pct = student.miPercentages?[cat];
+          row.add(pct != null ? pct.toStringAsFixed(1) : '');
+        }
+
+        // Per-question answers and times
+        for (final cat in _categoryOrder) {
+          final qs = _questions[cat] ?? [];
+          final answers = student.answerIndices?[cat] ?? [];
+          final times = student.questionTimeSeconds?[cat] ?? [];
+
+          for (int qi = 0; qi < qs.length; qi++) {
+            final q = qs[qi];
+            if (qi < answers.length) {
+              final optIdx = answers[qi];
+              final score = q.scoreForOption(optIdx);
+              final timeSec = qi < times.length ? times[qi] : 0;
+              // Option index is 0-based internally; show as 1-based
+              row.add('${optIdx + 1}');
+              row.add('$score');
+              row.add('$timeSec');
+            } else {
+              row.addAll(['', '', '']);
+            }
+          }
+        }
+
+        // Timing summary
+        row.add(student.miTotalSeconds?.toString() ?? '');
+        final avgQ = student.miAvgSecondsPerQuestion;
+        row.add(avgQ != null ? avgQ.toStringAsFixed(1) : '');
+        row.add(student.miTotalAnswerChanges?.toString() ?? '');
+
+        buf.writeln(row.join(','));
+      }
+
+      final csvString = buf.toString();
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/class_results.csv');
+      await file.writeAsString(csvString);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/csv')],
+        subject: 'Class Results - $_classCode',
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   void _copyCode() {
@@ -361,6 +449,40 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                           ),
                         ],
                       ),
+
+                      const SizedBox(height: 16),
+
+                      // ── Export CSV ─────────────────────
+                      if (_submittedCount > 0)
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: OutlinedButton.icon(
+                            onPressed: _exporting ? null : _exportCsv,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.dustyGrape,
+                              side: const BorderSide(
+                                  color: AppColors.dustyGrape, width: 1.5),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            icon: _exporting
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        color: AppColors.dustyGrape,
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.download_rounded, size: 18),
+                            label: Text(
+                              'export_class_csv'.tr(),
+                              style: GoogleFonts.hindSiliguri(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ).animate().fadeIn(delay: 220.ms),
 
                       const SizedBox(height: 24),
 
