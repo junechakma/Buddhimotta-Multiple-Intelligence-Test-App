@@ -36,5 +36,8 @@ class FirestoreService {
   ) =>
       _db.collection(collection).add(data);
 
+  static Future<void> deleteDocument(String collection, String docId) =>
+      _db.collection(collection).doc(docId).delete();
+
   static FieldValue get serverTimestamp => FieldValue.serverTimestamp();
 }

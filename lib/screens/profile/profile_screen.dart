@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../services/firestore_service.dart';
 import '../../services/guest_session.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/auth_widgets.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key, this.embedded = false});
@@ -214,6 +215,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     value: _roleLabel,
                                   ),
                                 ],
+                              ),
+                              const SizedBox(height: 16),
+                              _ProfileSection(
+                                title: 'language'.tr(),
+                                children: [_LangTile()],
                               ),
                               const SizedBox(height: 32),
                             ],
@@ -451,6 +457,34 @@ class _EditableNameTile extends StatelessWidget {
                 size: 18,
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LangTile extends StatelessWidget {
+  const _LangTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          const Icon(Icons.language_rounded, color: AppColors.primary, size: 20),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              'language'.tr(),
+              style: GoogleFonts.hindSiliguri(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+          const LangToggleButton(),
         ],
       ),
     );

@@ -110,6 +110,77 @@ class _StudentClassesScreenState extends State<StudentClassesScreen> {
     if (mounted) setState(() => _joining = false);
   }
 
+  Future<void> _confirmLeaveClass() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'leave_class'.tr(),
+          style: GoogleFonts.hindSiliguri(fontWeight: FontWeight.w700),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.class_rounded, color: AppColors.primary, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    _joinedClassCode,
+                    style: GoogleFonts.hindSiliguri(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'leave_class_confirm'.tr(),
+              style: GoogleFonts.hindSiliguri(
+                fontSize: 13,
+                color: AppColors.textSecondary,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('cancel'.tr(),
+                style: GoogleFonts.hindSiliguri(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              elevation: 0,
+            ),
+            child: Text('leave_class'.tr(),
+                style: GoogleFonts.hindSiliguri(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _leaveClass();
+  }
+
   Future<void> _leaveClass() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
@@ -119,8 +190,13 @@ class _StudentClassesScreenState extends State<StudentClassesScreen> {
         'classCode': '',
         'enrolledClasses': [],
       });
-      if (mounted) setState(() => _joinedClassCode = '');
-    } catch (_) {}
+      if (mounted) {
+        setState(() => _joinedClassCode = '');
+        _showSnack('class_left'.tr());
+      }
+    } catch (_) {
+      if (mounted) _showSnack('err_try_again'.tr(), error: true);
+    }
   }
 
   Future<void> _removeFromClass(String uid, String code) async {
@@ -219,7 +295,7 @@ class _StudentClassesScreenState extends State<StudentClassesScreen> {
                       if (_joinedClassCode.isNotEmpty) ...[
                         _JoinedClassCard(
                           code: _joinedClassCode,
-                          onLeave: _leaveClass,
+                          onLeave: _confirmLeaveClass,
                         ).animate().fadeIn(duration: 400.ms),
                         const SizedBox(height: 24),
                       ],

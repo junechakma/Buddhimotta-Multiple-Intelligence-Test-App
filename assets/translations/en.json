@@ -176,5 +176,15 @@
   "download_csv": "Download CSV",
   "your_answers": "Your Answers",
   "scenario_choices": "Your Scenario Choices",
-  "export_class_csv": "Export Class CSV"
+  "export_class_csv": "Export Class CSV",
+  "language": "Language",
+  "create_class": "Create Class",
+  "class_created": "Class created successfully!",
+  "delete_class": "Delete Class",
+  "delete_class_confirm": "This will permanently delete the class and remove all enrolled students. This cannot be undone.",
+  "class_deleted": "Class deleted",
+  "delete": "Delete",
+  "leave_class": "Leave Class",
+  "leave_class_confirm": "You will be removed from this class. You can rejoin later with the class code.",
+  "class_left": "You have left the class"
 }

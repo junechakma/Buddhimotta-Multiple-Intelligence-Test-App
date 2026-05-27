@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -76,11 +77,13 @@ class TeacherDashboardScreen extends StatefulWidget {
 
 class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
   String _teacherName = '';
-  String _classCode = '';
+  List<String> _classCodes = [];
+  String _activeCode = '';
   List<_StudentData> _students = [];
   Map<String, List<Question>> _questions = {};
   bool _loading = true;
   bool _exporting = false;
+  bool _creating = false;
 
   static const _categoryOrder = [
     'musical', 'visual', 'linguistic', 'logical',
@@ -118,11 +121,11 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       final data = doc.data()!;
       _teacherName = (data['name'] ?? '') as String;
 
-      // Teachers store their code under 'classes' list
       final classesList = (data['classes'] as List?)?.cast<String>() ?? [];
-      _classCode = classesList.isNotEmpty ? classesList.first : '';
+      _classCodes = classesList;
+      _activeCode = classesList.isNotEmpty ? classesList.first : '';
 
-      if (_classCode.isNotEmpty) {
+      if (_activeCode.isNotEmpty) {
         await Future.wait([_loadStudents(), _loadQuestions()]);
       } else {
         await _loadQuestions();
@@ -132,7 +135,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
   }
 
   Future<void> _loadStudents() async {
-    final snap = await FirestoreService.queryWhere('classes', 'classCode', _classCode);
+    final snap = await FirestoreService.queryWhere('classes', 'classCode', _activeCode);
     if (snap.docs.isEmpty) return;
 
     final rawStudents = (snap.docs.first.data()['students'] as List?) ?? [];
@@ -271,7 +274,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       await file.writeAsString(csvString);
       await Share.shareXFiles(
         [XFile(file.path, mimeType: 'text/csv')],
-        subject: 'Class Results - $_classCode',
+        subject: 'Class Results - $_activeCode',
       );
     } finally {
       if (mounted) setState(() => _exporting = false);
@@ -279,14 +282,165 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
   }
 
   void _copyCode() {
-    if (_classCode.isEmpty) return;
-    Clipboard.setData(ClipboardData(text: _classCode));
+    if (_activeCode.isEmpty) return;
+    Clipboard.setData(ClipboardData(text: _activeCode));
+    _showSnack('class_code_copied'.tr());
+  }
+
+  Future<void> _switchClass(String code) async {
+    if (code == _activeCode) return;
+    setState(() {
+      _activeCode = code;
+      _students = [];
+    });
+    await _loadStudents();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _confirmDeleteClass(String code) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'delete_class'.tr(),
+          style: GoogleFonts.hindSiliguri(fontWeight: FontWeight.w700),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.error.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.error.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.class_rounded, color: AppColors.error, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    code,
+                    style: GoogleFonts.hindSiliguri(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2,
+                      color: AppColors.error,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'delete_class_confirm'.tr(),
+              style: GoogleFonts.hindSiliguri(
+                fontSize: 13,
+                color: AppColors.textSecondary,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('cancel'.tr(),
+                style: GoogleFonts.hindSiliguri(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              elevation: 0,
+            ),
+            child: Text('delete'.tr(),
+                style: GoogleFonts.hindSiliguri(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _deleteClass(code);
+  }
+
+  Future<void> _deleteClass(String code) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    try {
+      // Delete the class document from Firestore
+      final snap = await FirestoreService.queryWhere('classes', 'classCode', code);
+      for (final doc in snap.docs) {
+        await FirestoreService.deleteDocument('classes', doc.id);
+      }
+
+      // Remove code from teacher's list
+      final updatedCodes = _classCodes.where((c) => c != code).toList();
+      await FirestoreService.updateDocument('users', uid, {'classes': updatedCodes});
+
+      if (mounted) {
+        setState(() {
+          _classCodes = updatedCodes;
+          _activeCode = updatedCodes.isNotEmpty ? updatedCodes.first : '';
+          _students = [];
+        });
+        _showSnack('class_deleted'.tr());
+      }
+
+      if (_activeCode.isNotEmpty) await _loadStudents();
+      if (mounted) setState(() {});
+    } catch (_) {
+      if (mounted) _showSnack('err_try_again'.tr(), error: true);
+    }
+  }
+
+  void _showSnack(String msg, {bool error = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('class_code_copied'.tr(), style: GoogleFonts.hindSiliguri()),
-      backgroundColor: AppColors.primary,
+      content: Text(msg, style: GoogleFonts.hindSiliguri()),
+      backgroundColor: error ? AppColors.error : AppColors.primary,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     ));
+  }
+
+  String _generateCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final rng = Random();
+    return List.generate(6, (_) => chars[rng.nextInt(chars.length)]).join();
+  }
+
+  Future<void> _createClass() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    setState(() => _creating = true);
+    try {
+      final code = _generateCode();
+      await FirestoreService.addDocument('classes', {
+        'classCode': code,
+        'students': [],
+        'teacherId': uid,
+      });
+      final updatedCodes = [..._classCodes, code];
+      await FirestoreService.updateDocument('users', uid, {
+        'classes': updatedCodes,
+      });
+      if (_questions.isEmpty) await _loadQuestions();
+      if (mounted) {
+        setState(() {
+          _classCodes = updatedCodes;
+          _activeCode = code;
+          _students = [];
+        });
+        _showSnack('class_created'.tr());
+      }
+    } catch (_) {
+      if (mounted) _showSnack('err_try_again'.tr(), error: true);
+    }
+    if (mounted) setState(() => _creating = false);
   }
 
   int get _submittedCount => _students.where((s) => s.hasMi).length;
@@ -306,6 +460,18 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
+      floatingActionButton: FloatingActionButton(
+        onPressed: _creating ? null : _createClass,
+        backgroundColor: AppColors.primary,
+        tooltip: 'create_class'.tr(),
+        child: _creating
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+              )
+            : const Icon(Icons.add_rounded, color: Colors.white),
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
           : RefreshIndicator(
@@ -370,7 +536,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                   ),
                 ),
 
-                if (_classCode.isEmpty)
+                if (_activeCode.isEmpty)
                   SliverFillRemaining(
                     child: Center(
                       child: Padding(
@@ -398,19 +564,107 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                                   color: AppColors.textSecondary,
                                   height: 1.5),
                             ),
+                            const SizedBox(height: 24),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: ElevatedButton.icon(
+                                onPressed: _creating ? null : _createClass,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primary,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14)),
+                                  elevation: 0,
+                                ),
+                                icon: _creating
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                            color: Colors.white, strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.add_rounded, size: 20),
+                                label: Text(
+                                  'create_class'.tr(),
+                                  style: GoogleFonts.hindSiliguri(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
                     ),
                   ),
 
-                if (_classCode.isNotEmpty)
+                if (_activeCode.isNotEmpty)
                 SliverPadding(
                   padding: const EdgeInsets.all(16),
                   sliver: SliverList(
                     delegate: SliverChildListDelegate([
+                      // ── Class switcher (shown when multiple classes) ──
+                      if (_classCodes.length > 1) ...[
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: _classCodes.map((code) {
+                              final active = code == _activeCode;
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: GestureDetector(
+                                  onTap: () => _switchClass(code),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: active
+                                          ? AppColors.primary
+                                          : Colors.white,
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                        color: AppColors.primary,
+                                        width: 1.5,
+                                      ),
+                                      boxShadow: active
+                                          ? [
+                                              BoxShadow(
+                                                color: AppColors.primary
+                                                    .withValues(alpha: 0.25),
+                                                blurRadius: 8,
+                                                offset: const Offset(0, 3),
+                                              )
+                                            ]
+                                          : [],
+                                    ),
+                                    child: Text(
+                                      code,
+                                      style: GoogleFonts.hindSiliguri(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 1.5,
+                                        color: active
+                                            ? Colors.white
+                                            : AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+
                       // ── Class code card ────────────────
-                      _ClassCodeCard(code: _classCode, onCopy: _copyCode)
+                      _ClassCodeCard(
+                        code: _activeCode,
+                        onCopy: _copyCode,
+                        onDelete: () => _confirmDeleteClass(_activeCode),
+                      )
                           .animate()
                           .fadeIn(duration: 400.ms),
 
@@ -1077,9 +1331,14 @@ class _AnswerReviewSection extends StatelessWidget {
 // ── Class code card ───────────────────────────────────────────────────────────
 
 class _ClassCodeCard extends StatelessWidget {
-  const _ClassCodeCard({required this.code, required this.onCopy});
+  const _ClassCodeCard({
+    required this.code,
+    required this.onCopy,
+    required this.onDelete,
+  });
   final String code;
   final VoidCallback onCopy;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1128,6 +1387,19 @@ class _ClassCodeCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: const Icon(Icons.copy_rounded, color: Colors.white, size: 22),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onDelete,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.delete_outline_rounded,
+                  color: Colors.white70, size: 22),
             ),
           ),
         ],
